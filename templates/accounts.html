@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Аккаунты — TG Parser{% endblock %}
+{% block content %}
+<h2>Telegram-аккаунты</h2>
+
+<div class="card">
+    <h3>Добавить аккаунт</h3>
+    <form id="addAccountForm" class="form-inline">
+        <input type="text" id="accLabel" placeholder="Название" required>
+        <input type="number" id="accApiId" placeholder="API ID" required>
+        <input type="text" id="accApiHash" placeholder="API Hash" required>
+        <input type="tel" id="accPhone" placeholder="+7..." required>
+        <button type="submit" class="btn btn-primary">Добавить</button>
+    </form>
+</div>
+
+<div id="authModal" class="modal" style="display:none">
+    <div class="modal-content">
+        <h3>Авторизация</h3>
+        <p>Код отправлен на телефон. Введите код подтверждения:</p>
+        <form id="authForm">
+            <input type="text" id="authCode" placeholder="Код" required>
+            <input type="password" id="auth2fa" placeholder="2FA пароль (если есть)">
+            <button type="submit" class="btn btn-primary">Подтвердить</button>
+            <button type="button" class="btn" onclick="closeModal()">Отмена</button>
+        </form>
+        <div id="authError" class="error-msg" style="display:none"></div>
+    </div>
+</div>
+
+<table class="data-table" id="accountsTable">
+    <thead>
+        <tr>
+            <th>Название</th>
+            <th>API ID</th>
+            <th>Телефон</th>
+            <th>Статус</th>
+            <th>Ошибка</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentAccountId = null;
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function createAccountRow(a) {
+    const tr = document.createElement('tr');
+
+    const tdLabel = document.createElement('td');
+    tdLabel.textContent = a.label;
+    tr.appendChild(tdLabel);
+
+    const tdApi = document.createElement('td');
+    tdApi.textContent = a.api_id;
+    tr.appendChild(tdApi);
+
+    const tdPhone = document.createElement('td');
+    tdPhone.textContent = a.phone;
+    tr.appendChild(tdPhone);
+
+    const tdStatus = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'badge badge-' + a.status;
+    badge.textContent = a.status;
+    tdStatus.appendChild(badge);
+    tr.appendChild(tdStatus);
+
+    const tdError = document.createElement('td');
+    tdError.textContent = a.last_error || '—';
+    tr.appendChild(tdError);
+
+    const tdActions = document.createElement('td');
+    if (a.status === 'new' || a.status === 'error') {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm';
+        btn.textContent = 'Авторизовать';
+        btn.addEventListener('click', () => startAuth(a.id));
+        tdActions.appendChild(btn);
+    }
+    tr.appendChild(tdActions);
+
+    return tr;
+}
+
+async function loadAccounts() {
+    const res = await fetch('/api/accounts');
+    const accounts = await res.json();
+    const tbody = document.querySelector('#accountsTable tbody');
+    tbody.replaceChildren();
+    accounts.forEach(a => tbody.appendChild(createAccountRow(a)));
+}
+
+document.getElementById('addAccountForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await fetch('/api/accounts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            label: document.getElementById('accLabel').value,
+            api_id: parseInt(document.getElementById('accApiId').value),
+            api_hash: document.getElementById('accApiHash').value,
+            phone: document.getElementById('accPhone').value
+        })
+    });
+    e.target.reset();
+    loadAccounts();
+});
+
+async function startAuth(id) {
+    currentAccountId = id;
+    const res = await fetch('/api/accounts/' + encodeURIComponent(id) + '/auth/start', {method: 'POST'});
+    if (res.ok) {
+        document.getElementById('authModal').style.display = 'flex';
+    } else {
+        const data = await res.json();
+        alert('Ошибка: ' + (data.detail || 'Неизвестная ошибка'));
+    }
+}
+
+document.getElementById('authForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('authError');
+    err.style.display = 'none';
+    const res = await fetch('/api/accounts/' + encodeURIComponent(currentAccountId) + '/auth/confirm', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            code: document.getElementById('authCode').value,
+            password_2fa: document.getElementById('auth2fa').value || null
+        })
+    });
+    if (res.ok) {
+        closeModal();
+        loadAccounts();
+    } else {
+        const data = await res.json();
+        err.textContent = data.detail || 'Ошибка';
+        err.style.display = 'block';
+    }
+});
+
+function closeModal() {
+    document.getElementById('authModal').style.display = 'none';
+    document.getElementById('authForm').reset();
+}
+
+loadAccounts();
+</script>
+{% endblock %}

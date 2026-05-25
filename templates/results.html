@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Результаты — TG Parser{% endblock %}
+{% block content %}
+<h2>Результаты</h2>
+
+<div class="card filters-bar">
+    <form id="filterForm" class="form-inline">
+        <select id="fSource"><option value="">Все источники</option></select>
+        <select id="fFilterSet"><option value="">Все наборы</option></select>
+        <input type="text" id="fKeyword" placeholder="Ключевое слово">
+        <input type="text" id="fAuthor" placeholder="@username автора">
+        <input type="text" id="fSearch" placeholder="Поиск по тексту">
+        <input type="datetime-local" id="fDateFrom" title="От">
+        <input type="datetime-local" id="fDateTo" title="До">
+        <button type="submit" class="btn btn-primary">Найти</button>
+    </form>
+    <div class="export-buttons">
+        <button class="btn btn-sm" onclick="exportData('csv')">CSV</button>
+        <button class="btn btn-sm" onclick="exportData('xlsx')">XLSX</button>
+    </div>
+</div>
+
+<div id="resultsMeta" class="results-meta"></div>
+
+<table class="data-table" id="resultsTable">
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>Источник</th>
+            <th>Автор</th>
+            <th>Текст</th>
+            <th>Ключи</th>
+            <th>Ссылка</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<div class="pagination" id="pagination"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+const pageSize = 50;
+
+async function loadFilterOptions() {
+    const [srcRes, fsRes] = await Promise.all([
+        fetch('/api/sources'),
+        fetch('/api/filter-sets')
+    ]);
+    const sources = await srcRes.json();
+    const filterSets = await fsRes.json();
+
+    const srcSel = document.getElementById('fSource');
+    sources.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.title;
+        srcSel.appendChild(opt);
+    });
+
+    const fsSel = document.getElementById('fFilterSet');
+    filterSets.forEach(fs => {
+        const opt = document.createElement('option');
+        opt.value = fs.id;
+        opt.textContent = fs.name;
+        fsSel.appendChild(opt);
+    });
+}
+
+function buildQueryString(page) {
+    const params = new URLSearchParams();
+    params.set('page', page);
+    params.set('page_size', pageSize);
+    const fSource = document.getElementById('fSource').value;
+    const fFilterSet = document.getElementById('fFilterSet').value;
+    const fKeyword = document.getElementById('fKeyword').value;
+    const fAuthor = document.getElementById('fAuthor').value;
+    const fSearch = document.getElementById('fSearch').value;
+    const fDateFrom = document.getElementById('fDateFrom').value;
+    const fDateTo = document.getElementById('fDateTo').value;
+    if (fSource) params.set('source_id', fSource);
+    if (fFilterSet) params.set('filter_set_id', fFilterSet);
+    if (fKeyword) params.set('keyword', fKeyword);
+    if (fAuthor) params.set('author_username', fAuthor);
+    if (fSearch) params.set('search', fSearch);
+    if (fDateFrom) params.set('date_from', new Date(fDateFrom).toISOString());
+    if (fDateTo) params.set('date_to', new Date(fDateTo).toISOString());
+    return params.toString();
+}
+
+function createResultRow(m) {
+    const tr = document.createElement('tr');
+
+    const tdDate = document.createElement('td');
+    tdDate.textContent = new Date(m.posted_at).toLocaleString('ru');
+    tr.appendChild(tdDate);
+
+    const tdSource = document.createElement('td');
+    tdSource.textContent = m.source_id.substring(0, 8);
+    tr.appendChild(tdSource);
+
+    const tdAuthor = document.createElement('td');
+    tdAuthor.textContent = m.author_username || m.author_display_name || '—';
+    tr.appendChild(tdAuthor);
+
+    const tdText = document.createElement('td');
+    tdText.className = 'text-cell';
+    const text = m.message_text || '';
+    tdText.textContent = text.length > 150 ? text.substring(0, 150) + '...' : text;
+    tr.appendChild(tdText);
+
+    const tdKeys = document.createElement('td');
+    tdKeys.textContent = (m.matched_keywords || []).join(', ');
+    tr.appendChild(tdKeys);
+
+    const tdLink = document.createElement('td');
+    if (m.message_link) {
+        const a = document.createElement('a');
+        a.href = m.message_link;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = 'Открыть';
+        tdLink.appendChild(a);
+    } else {
+        tdLink.textContent = '—';
+    }
+    tr.appendChild(tdLink);
+
+    return tr;
+}
+
+async function loadResults(page) {
+    currentPage = page || 1;
+    const qs = buildQueryString(currentPage);
+    const res = await fetch('/api/matches?' + qs);
+    const data = await res.json();
+
+    const tbody = document.querySelector('#resultsTable tbody');
+    tbody.replaceChildren();
+    data.items.forEach(m => tbody.appendChild(createResultRow(m)));
+
+    const meta = document.getElementById('resultsMeta');
+    meta.textContent = 'Найдено: ' + data.total + ' | Страница ' + data.page + ' из ' + Math.ceil(data.total / data.page_size);
+
+    renderPagination(data.total, data.page, data.page_size);
+}
+
+function renderPagination(total, page, size) {
+    const container = document.getElementById('pagination');
+    container.replaceChildren();
+    const totalPages = Math.ceil(total / size);
+    if (totalPages <= 1) return;
+
+    for (let i = 1; i <= Math.min(totalPages, 10); i++) {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm' + (i === page ? ' btn-primary' : '');
+        btn.textContent = i;
+        btn.addEventListener('click', () => loadResults(i));
+        container.appendChild(btn);
+    }
+}
+
+function exportData(format) {
+    const params = new URLSearchParams();
+    params.set('format', format);
+    const fSource = document.getElementById('fSource').value;
+    const fFilterSet = document.getElementById('fFilterSet').value;
+    const fKeyword = document.getElementById('fKeyword').value;
+    const fAuthor = document.getElementById('fAuthor').value;
+    const fSearch = document.getElementById('fSearch').value;
+    const fDateFrom = document.getElementById('fDateFrom').value;
+    const fDateTo = document.getElementById('fDateTo').value;
+    if (fSource) params.set('source_id', fSource);
+    if (fFilterSet) params.set('filter_set_id', fFilterSet);
+    if (fKeyword) params.set('keyword', fKeyword);
+    if (fAuthor) params.set('author_username', fAuthor);
+    if (fSearch) params.set('search', fSearch);
+    if (fDateFrom) params.set('date_from', new Date(fDateFrom).toISOString());
+    if (fDateTo) params.set('date_to', new Date(fDateTo).toISOString());
+    window.open('/api/matches/export?' + params.toString());
+}
+
+document.getElementById('filterForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    loadResults(1);
+});
+
+loadFilterOptions();
+loadResults(1);
+</script>
+{% endblock %}

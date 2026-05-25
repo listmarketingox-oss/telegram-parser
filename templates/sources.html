@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Источники — TG Parser{% endblock %}
+{% block content %}
+<h2>Источники (каналы/группы)</h2>
+
+<div class="card">
+    <h3>Добавить источник</h3>
+    <p class="hint">Для закрытых каналов: сначала вручную добавьте рабочий аккаунт в канал/группу.</p>
+    <form id="addSourceForm" class="form-inline">
+        <select id="srcAccount" required><option value="">Выберите аккаунт</option></select>
+        <input type="text" id="srcUsername" placeholder="@username или t.me/..." required>
+        <input type="datetime-local" id="srcFirstPassUntil" title="Тянуть историю до этой даты">
+        <button type="submit" class="btn btn-primary">Добавить</button>
+    </form>
+    <div id="srcError" class="error-msg" style="display:none"></div>
+</div>
+
+<table class="data-table" id="sourcesTable">
+    <thead>
+        <tr>
+            <th>Название</th>
+            <th>Username</th>
+            <th>Тип</th>
+            <th>Активен</th>
+            <th>Первичный проход</th>
+            <th>Last ID</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadAccounts() {
+    const res = await fetch('/api/accounts');
+    const accounts = await res.json();
+    const sel = document.getElementById('srcAccount');
+    accounts.filter(a => a.status === 'active').forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.label + ' (' + a.phone + ')';
+        sel.appendChild(opt);
+    });
+}
+
+function createSourceRow(s) {
+    const tr = document.createElement('tr');
+
+    const tdTitle = document.createElement('td');
+    tdTitle.textContent = s.title;
+    tr.appendChild(tdTitle);
+
+    const tdUser = document.createElement('td');
+    tdUser.textContent = s.username ? '@' + s.username : '—';
+    tr.appendChild(tdUser);
+
+    const tdType = document.createElement('td');
+    tdType.textContent = s.type;
+    tr.appendChild(tdType);
+
+    const tdActive = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'badge badge-' + (s.is_active ? 'active' : 'off');
+    badge.textContent = s.is_active ? 'Да' : 'Нет';
+    tdActive.appendChild(badge);
+    tr.appendChild(tdActive);
+
+    const tdPass = document.createElement('td');
+    tdPass.textContent = s.first_pass_done ? 'Готово' : 'Ожидает';
+    tr.appendChild(tdPass);
+
+    const tdLast = document.createElement('td');
+    tdLast.textContent = s.last_parsed_message_id || '—';
+    tr.appendChild(tdLast);
+
+    const tdActions = document.createElement('td');
+
+    const parseBtn = document.createElement('button');
+    parseBtn.className = 'btn btn-sm';
+    parseBtn.textContent = 'Прочесать';
+    parseBtn.addEventListener('click', () => triggerParse(s.id));
+    tdActions.appendChild(parseBtn);
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'btn btn-sm';
+    toggleBtn.textContent = s.is_active ? 'Выкл' : 'Вкл';
+    toggleBtn.addEventListener('click', () => toggleSource(s.id, !s.is_active));
+    tdActions.appendChild(toggleBtn);
+
+    tr.appendChild(tdActions);
+    return tr;
+}
+
+async function loadSources() {
+    const res = await fetch('/api/sources');
+    const sources = await res.json();
+    const tbody = document.querySelector('#sourcesTable tbody');
+    tbody.replaceChildren();
+    sources.forEach(s => tbody.appendChild(createSourceRow(s)));
+}
+
+document.getElementById('addSourceForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('srcError');
+    err.style.display = 'none';
+    const fpUntil = document.getElementById('srcFirstPassUntil').value;
+    const res = await fetch('/api/sources', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            account_id: document.getElementById('srcAccount').value,
+            username: document.getElementById('srcUsername').value,
+            first_pass_until: fpUntil ? new Date(fpUntil).toISOString() : null
+        })
+    });
+    if (res.ok) {
+        e.target.reset();
+        loadSources();
+    } else {
+        const data = await res.json();
+        err.textContent = data.detail || 'Ошибка';
+        err.style.display = 'block';
+    }
+});
+
+async function triggerParse(id) {
+    await fetch('/api/sources/' + encodeURIComponent(id) + '/parse', {method: 'POST'});
+    alert('Задача на прочёс поставлена в очередь');
+}
+
+async function toggleSource(id, active) {
+    await fetch('/api/sources/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({is_active: active})
+    });
+    loadSources();
+}
+
+loadAccounts();
+loadSources();
+</script>
+{% endblock %}

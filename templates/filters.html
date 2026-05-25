@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Фильтры — TG Parser{% endblock %}
+{% block content %}
+<h2>Наборы фильтров</h2>
+
+<div class="card">
+    <h3>Создать набор</h3>
+    <form id="addFilterForm" class="form-inline">
+        <input type="text" id="fsName" placeholder="Название (напр. Лиды по маркетингу)" required>
+        <input type="datetime-local" id="fsDateFrom" title="Период: от">
+        <input type="datetime-local" id="fsDateTo" title="Период: до">
+        <button type="submit" class="btn btn-primary">Создать</button>
+    </form>
+</div>
+
+<div id="filterSets"></div>
+
+<div id="kwModal" class="modal" style="display:none">
+    <div class="modal-content">
+        <h3>Добавить ключевое слово</h3>
+        <form id="kwForm">
+            <input type="text" id="kwPattern" placeholder="Слово или фраза" required>
+            <select id="kwMatchType">
+                <option value="substring">Подстрока</option>
+                <option value="whole_word">Целое слово</option>
+                <option value="regex">Regex</option>
+            </select>
+            <label><input type="checkbox" id="kwCaseSensitive"> Учитывать регистр</label>
+            <button type="submit" class="btn btn-primary">Добавить</button>
+            <button type="button" class="btn" onclick="closeKwModal()">Отмена</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentFsId = null;
+
+function createKeywordTag(fsId, kw) {
+    const span = document.createElement('span');
+    span.className = 'keyword-tag';
+
+    const text = document.createElement('span');
+    text.textContent = kw.pattern + ' (' + kw.match_type + ')';
+    span.appendChild(text);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'keyword-remove';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', () => deleteKeyword(fsId, kw.id));
+    span.appendChild(removeBtn);
+
+    return span;
+}
+
+function createFilterSetCard(fs) {
+    const card = document.createElement('div');
+    card.className = 'card filter-card';
+
+    const header = document.createElement('div');
+    header.className = 'filter-header';
+
+    const title = document.createElement('h3');
+    title.textContent = fs.name;
+    header.appendChild(title);
+
+    const statusBadge = document.createElement('span');
+    statusBadge.className = 'badge badge-' + (fs.is_active ? 'active' : 'off');
+    statusBadge.textContent = fs.is_active ? 'Активен' : 'Выкл';
+    header.appendChild(statusBadge);
+
+    card.appendChild(header);
+
+    const meta = document.createElement('p');
+    meta.className = 'filter-meta';
+    const parts = [];
+    if (fs.date_from) parts.push('от ' + new Date(fs.date_from).toLocaleDateString('ru'));
+    if (fs.date_to) parts.push('до ' + new Date(fs.date_to).toLocaleDateString('ru'));
+    meta.textContent = parts.length ? 'Период: ' + parts.join(' ') : 'Период: не ограничен';
+    card.appendChild(meta);
+
+    const kwContainer = document.createElement('div');
+    kwContainer.className = 'keywords-list';
+    if (fs.keywords && fs.keywords.length) {
+        fs.keywords.forEach(kw => kwContainer.appendChild(createKeywordTag(fs.id, kw)));
+    } else {
+        const empty = document.createElement('span');
+        empty.className = 'hint';
+        empty.textContent = 'Нет ключевых слов';
+        kwContainer.appendChild(empty);
+    }
+    card.appendChild(kwContainer);
+
+    const actions = document.createElement('div');
+    actions.className = 'filter-actions';
+
+    const addKwBtn = document.createElement('button');
+    addKwBtn.className = 'btn btn-sm';
+    addKwBtn.textContent = '+ Ключевое слово';
+    addKwBtn.addEventListener('click', () => openKwModal(fs.id));
+    actions.appendChild(addKwBtn);
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'btn btn-sm';
+    toggleBtn.textContent = fs.is_active ? 'Выключить' : 'Включить';
+    toggleBtn.addEventListener('click', () => toggleFilter(fs.id, !fs.is_active));
+    actions.appendChild(toggleBtn);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn btn-sm btn-danger';
+    deleteBtn.textContent = 'Удалить';
+    deleteBtn.addEventListener('click', () => deleteFilter(fs.id));
+    actions.appendChild(deleteBtn);
+
+    card.appendChild(actions);
+    return card;
+}
+
+async function loadFilters() {
+    const res = await fetch('/api/filter-sets');
+    const filters = await res.json();
+    const container = document.getElementById('filterSets');
+    container.replaceChildren();
+    filters.forEach(fs => container.appendChild(createFilterSetCard(fs)));
+}
+
+document.getElementById('addFilterForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const dateFrom = document.getElementById('fsDateFrom').value;
+    const dateTo = document.getElementById('fsDateTo').value;
+    await fetch('/api/filter-sets', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            name: document.getElementById('fsName').value,
+            date_from: dateFrom ? new Date(dateFrom).toISOString() : null,
+            date_to: dateTo ? new Date(dateTo).toISOString() : null
+        })
+    });
+    e.target.reset();
+    loadFilters();
+});
+
+function openKwModal(fsId) {
+    currentFsId = fsId;
+    document.getElementById('kwModal').style.display = 'flex';
+}
+
+function closeKwModal() {
+    document.getElementById('kwModal').style.display = 'none';
+    document.getElementById('kwForm').reset();
+}
+
+document.getElementById('kwForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await fetch('/api/filter-sets/' + encodeURIComponent(currentFsId) + '/keywords', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            pattern: document.getElementById('kwPattern').value,
+            match_type: document.getElementById('kwMatchType').value,
+            is_case_sensitive: document.getElementById('kwCaseSensitive').checked
+        })
+    });
+    closeKwModal();
+    loadFilters();
+});
+
+async function deleteKeyword(fsId, kwId) {
+    await fetch('/api/filter-sets/' + encodeURIComponent(fsId) + '/keywords/' + encodeURIComponent(kwId), {method: 'DELETE'});
+    loadFilters();
+}
+
+async function toggleFilter(fsId, active) {
+    await fetch('/api/filter-sets/' + encodeURIComponent(fsId), {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({is_active: active})
+    });
+    loadFilters();
+}
+
+async function deleteFilter(fsId) {
+    if (!confirm('Удалить набор фильтров?')) return;
+    await fetch('/api/filter-sets/' + encodeURIComponent(fsId), {method: 'DELETE'});
+    loadFilters();
+}
+
+loadFilters();
+</script>
+{% endblock %}

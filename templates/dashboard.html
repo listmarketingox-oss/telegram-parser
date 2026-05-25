@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Дашборд — TG Parser{% endblock %}
+{% block content %}
+<h2>Дашборд</h2>
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ accounts_count }}</div>
+        <div class="stat-label">Аккаунтов</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ sources_active }}</div>
+        <div class="stat-label">Активных источников</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ matches_total }}</div>
+        <div class="stat-label">Совпадений</div>
+    </div>
+</div>
+
+<h3>Последние совпадения</h3>
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>Автор</th>
+            <th>Текст</th>
+            <th>Ключи</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for m in recent_matches %}
+        <tr>
+            <td>{{ m.posted_at.strftime('%d.%m.%Y %H:%M') }}</td>
+            <td>{{ m.author_username or m.author_display_name or '—' }}</td>
+            <td class="text-cell">{{ m.message_text[:120] }}{% if m.message_text|length > 120 %}…{% endif %}</td>
+            <td>{{ m.matched_keywords|join(', ') }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">Нет данных</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

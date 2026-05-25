@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Telegram Parser{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">TG Parser</div>
+        <div class="nav-links">
+            <a href="/dashboard">Дашборд</a>
+            <a href="/accounts-page">Аккаунты</a>
+            <a href="/sources-page">Источники</a>
+            <a href="/filters-page">Фильтры</a>
+            <a href="/results-page">Результаты</a>
+            <button onclick="logout()" class="btn btn-sm">Выйти</button>
+        </div>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <script src="/static/js/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

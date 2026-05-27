@@ -1,7 +1,8 @@
 """Server-side rendered pages using Jinja2."""
 from fastapi import APIRouter, Cookie, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
+from starlette.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,8 @@ from app.models.tg_account import TgAccount
 from app.services.auth import decode_access_token
 
 router = APIRouter(tags=["pages"])
-templates = Jinja2Templates(directory="templates")
+_env = Environment(loader=FileSystemLoader("templates"), auto_reload=True, cache_size=0)
+templates = Jinja2Templates(env=_env)
 
 
 def _check_auth(access_token: str | None) -> bool:
@@ -30,7 +32,7 @@ async def index(request: Request, access_token: str | None = Cookie(default=None
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html")
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -53,8 +55,7 @@ async def dashboard_page(
     )
     recent_matches = recent.scalars().all()
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", context={
         "accounts_count": accounts_count,
         "sources_active": sources_active,
         "matches_total": matches_total,
@@ -66,25 +67,25 @@ async def dashboard_page(
 async def accounts_page(request: Request, access_token: str | None = Cookie(default=None)):
     if not _check_auth(access_token):
         return RedirectResponse("/login")
-    return templates.TemplateResponse("accounts.html", {"request": request})
+    return templates.TemplateResponse(request, "accounts.html")
 
 
 @router.get("/sources-page", response_class=HTMLResponse)
 async def sources_page(request: Request, access_token: str | None = Cookie(default=None)):
     if not _check_auth(access_token):
         return RedirectResponse("/login")
-    return templates.TemplateResponse("sources.html", {"request": request})
+    return templates.TemplateResponse(request, "sources.html")
 
 
 @router.get("/filters-page", response_class=HTMLResponse)
 async def filters_page(request: Request, access_token: str | None = Cookie(default=None)):
     if not _check_auth(access_token):
         return RedirectResponse("/login")
-    return templates.TemplateResponse("filters.html", {"request": request})
+    return templates.TemplateResponse(request, "filters.html")
 
 
 @router.get("/results-page", response_class=HTMLResponse)
 async def results_page(request: Request, access_token: str | None = Cookie(default=None)):
     if not _check_auth(access_token):
         return RedirectResponse("/login")
-    return templates.TemplateResponse("results.html", {"request": request})
+    return templates.TemplateResponse(request, "results.html")

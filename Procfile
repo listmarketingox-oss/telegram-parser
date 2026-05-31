@@ -1,2 +1,2 @@
-web: PYTHONPATH=/app bash start.sh
-worker: PYTHONPATH=/app python -m app.worker
+web: bash start.sh
+worker: python -m app.worker

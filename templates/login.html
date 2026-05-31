@@ -34,12 +34,17 @@
                 if (res.ok) {
                     window.location.href = '/dashboard';
                 } else {
-                    const data = await res.json();
-                    err.textContent = data.detail || 'Ошибка входа';
+                    const text = await res.text();
+                    try {
+                        const data = JSON.parse(text);
+                        err.textContent = data.detail || 'Ошибка входа';
+                    } catch (_) {
+                        err.textContent = 'Ошибка ' + res.status + ': ' + text.substring(0, 200);
+                    }
                     err.style.display = 'block';
                 }
             } catch (e) {
-                err.textContent = 'Ошибка сети';
+                err.textContent = 'Сеть: ' + e.message;
                 err.style.display = 'block';
             }
         });

@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.api import accounts, auth, filter_sets, jobs, matches, pages, search, sources, users
+from app.database import async_session
 
 app = FastAPI(title="Telegram Parser", version="1.0.0")
 
@@ -20,4 +22,9 @@ app.include_router(pages.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    try:
+        async with async_session() as db:
+            await db.execute(text("SELECT 1"))
+        return {"status": "ok", "db": "connected"}
+    except Exception as e:
+        return {"status": "error", "db": str(e)}

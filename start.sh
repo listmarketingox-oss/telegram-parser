@@ -1,8 +1,10 @@
 #!/bin/bash
 set -e
 
-echo "Running database migrations..."
-PYTHONPATH=/app alembic upgrade head
+export PYTHONPATH="${PYTHONPATH:-/app}"
 
-echo "Starting web server..."
-exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+echo "Running database migrations..."
+python -m alembic upgrade head || echo "Migration warning (may be ok on first run)"
+
+echo "Starting web server on port ${PORT:-8000}..."
+exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

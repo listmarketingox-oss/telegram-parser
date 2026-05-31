@@ -101,6 +101,8 @@ async def _save_match(
             f"{getattr(sender, 'first_name', '') or ''} {getattr(sender, 'last_name', '') or ''}".strip()
             if sender else None
         ),
+        author_phone=getattr(sender, "phone", None) if sender else None,
+        source_title=source.title,
         posted_at=msg.date,
     )
     db.add(match)
@@ -143,7 +145,20 @@ async def parse_source(source_id: uuid.UUID, is_first_pass: bool = False):
             return
 
         try:
-            entity = await client.get_entity(source.tg_entity_id)
+            # Resolve by username first, then -100 prefix, then raw id
+            entity = None
+            if source.username:
+                try:
+                    entity = await client.get_entity(source.username)
+                except Exception:
+                    pass
+            if not entity:
+                try:
+                    entity = await client.get_entity(int(f"-100{source.tg_entity_id}"))
+                except Exception:
+                    pass
+            if not entity:
+                entity = await client.get_entity(source.tg_entity_id)
 
             kwargs = {"entity": entity, "limit": 100}
             if not is_first_pass and source.last_parsed_message_id:

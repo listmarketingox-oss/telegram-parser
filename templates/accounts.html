@@ -76,11 +76,11 @@ function createAccountRow(a) {
     tr.appendChild(tdStatus);
 
     const tdError = document.createElement('td');
-    tdError.textContent = a.last_error || '—';
+    tdError.textContent = (a.status === 'auth_pending') ? 'Ожидает код' : (a.last_error || '—');
     tr.appendChild(tdError);
 
     const tdActions = document.createElement('td');
-    if (a.status === 'new' || a.status === 'error') {
+    if (a.status === 'new' || a.status === 'error' || a.status === 'auth_pending') {
         const btn = document.createElement('button');
         btn.className = 'btn btn-sm';
         btn.textContent = 'Авторизовать';

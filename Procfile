@@ -1,2 +1,2 @@
-web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-worker: python -m app.worker
+web: bash start.sh
+worker: PYTHONPATH=/app python -m app.worker

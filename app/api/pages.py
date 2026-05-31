@@ -89,3 +89,10 @@ async def results_page(request: Request, access_token: str | None = Cookie(defau
     if not _check_auth(access_token):
         return RedirectResponse("/login")
     return templates.TemplateResponse(request, "results.html")
+
+
+@router.get("/search-page", response_class=HTMLResponse)
+async def search_page(request: Request, access_token: str | None = Cookie(default=None)):
+    if not _check_auth(access_token):
+        return RedirectResponse("/login")
+    return templates.TemplateResponse(request, "search.html")

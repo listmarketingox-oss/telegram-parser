@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import accounts, auth, filter_sets, jobs, matches, pages, sources, users
+from app.api import accounts, auth, filter_sets, jobs, matches, pages, search, sources, users
 
 app = FastAPI(title="Telegram Parser", version="1.0.0")
 
@@ -14,6 +14,7 @@ app.include_router(sources.router, prefix="/api")
 app.include_router(filter_sets.router, prefix="/api")
 app.include_router(matches.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
 app.include_router(pages.router)
 
 

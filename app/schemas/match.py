@@ -15,6 +15,8 @@ class MatchResponse(BaseModel):
     author_user_id: int | None
     author_username: str | None
     author_display_name: str | None
+    author_phone: str | None = None
+    source_title: str | None = None
     posted_at: datetime
     collected_at: datetime
 

@@ -27,6 +27,8 @@ class Match(UUIDMixin, Base):
     author_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     author_username: Mapped[str | None] = mapped_column(String, nullable=True)
     author_display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    author_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_title: Mapped[str | None] = mapped_column(String, nullable=True)
     posted_at: Mapped[datetime.datetime]
     collected_at: Mapped[datetime.datetime] = mapped_column(
         server_default="now()"

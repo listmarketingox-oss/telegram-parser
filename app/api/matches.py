@@ -87,26 +87,28 @@ async def export_matches(
     matches = result.scalars().all()
 
     headers = [
-        "posted_at", "source_id", "message_id", "message_link",
-        "author_username", "author_display_name", "message_text",
-        "matched_keywords",
+        "Канал", "Сообщение", "Ник", "Имя", "Телефон",
+        "Ключевые слова", "Дата и время", "Ссылка",
     ]
+
+    def _row(m):
+        return [
+            m.source_title or "",
+            m.message_text,
+            m.author_username or "",
+            m.author_display_name or "",
+            m.author_phone or "",
+            ", ".join(m.matched_keywords),
+            m.posted_at.strftime("%d.%m.%Y %H:%M"),
+            m.message_link or "",
+        ]
 
     if format == "csv":
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(headers)
         for m in matches:
-            writer.writerow([
-                m.posted_at.isoformat(),
-                str(m.source_id),
-                m.message_id,
-                m.message_link or "",
-                m.author_username or "",
-                m.author_display_name or "",
-                m.message_text,
-                ", ".join(m.matched_keywords),
-            ])
+            writer.writerow(_row(m))
         output.seek(0)
         return StreamingResponse(
             output,
@@ -119,16 +121,7 @@ async def export_matches(
     ws = wb.active
     ws.append(headers)
     for m in matches:
-        ws.append([
-            m.posted_at.isoformat(),
-            str(m.source_id),
-            m.message_id,
-            m.message_link or "",
-            m.author_username or "",
-            m.author_display_name or "",
-            m.message_text,
-            ", ".join(m.matched_keywords),
-        ])
+        ws.append(_row(m))
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)

@@ -4,15 +4,26 @@
 <h2>Источники (каналы/группы)</h2>
 
 <div class="card">
-    <h3>Добавить источник</h3>
+    <h3>Добавить источники</h3>
     <p class="hint">Для закрытых каналов: сначала вручную добавьте рабочий аккаунт в канал/группу.</p>
-    <form id="addSourceForm" class="form-inline">
-        <select id="srcAccount" required><option value="">Выберите аккаунт</option></select>
-        <input type="text" id="srcUsername" placeholder="@username или t.me/..." required>
-        <input type="datetime-local" id="srcFirstPassUntil" title="Тянуть историю до этой даты">
-        <button type="submit" class="btn btn-primary">Добавить</button>
+    <form id="addSourceForm">
+        <div class="form-inline" style="margin-bottom: 12px;">
+            <select id="srcAccount" required><option value="">Выберите аккаунт</option></select>
+        </div>
+        <div style="margin-bottom: 12px;">
+            <label class="form-label">Каналы/группы (по одному на строку):</label>
+            <textarea id="srcUsernames" rows="5" placeholder="@channel1&#10;@channel2&#10;t.me/group3&#10;..." style="width:100%; padding:8px 12px; border:1px solid #ddd; border-radius:6px; font-size:13px;" required></textarea>
+        </div>
+        <div class="form-inline" style="margin-bottom: 12px;">
+            <label>Период парсинга:</label>
+            <input type="date" id="srcDateFrom" title="С какой даты">
+            <span>—</span>
+            <input type="date" id="srcDateTo" title="По какую дату">
+        </div>
+        <button type="submit" class="btn btn-primary">Добавить все</button>
     </form>
     <div id="srcError" class="error-msg" style="display:none"></div>
+    <div id="srcSuccess" class="success-msg" style="display:none"></div>
 </div>
 
 <table class="data-table" id="sourcesTable">
@@ -23,7 +34,6 @@
             <th>Тип</th>
             <th>Активен</th>
             <th>Первичный проход</th>
-            <th>Last ID</th>
             <th>Действия</th>
         </tr>
     </thead>
@@ -71,10 +81,6 @@ function createSourceRow(s) {
     tdPass.textContent = s.first_pass_done ? 'Готово' : 'Ожидает';
     tr.appendChild(tdPass);
 
-    const tdLast = document.createElement('td');
-    tdLast.textContent = s.last_parsed_message_id || '—';
-    tr.appendChild(tdLast);
-
     const tdActions = document.createElement('td');
 
     const parseBtn = document.createElement('button');
@@ -88,6 +94,12 @@ function createSourceRow(s) {
     toggleBtn.textContent = s.is_active ? 'Выкл' : 'Вкл';
     toggleBtn.addEventListener('click', () => toggleSource(s.id, !s.is_active));
     tdActions.appendChild(toggleBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-danger';
+    delBtn.textContent = 'Удалить';
+    delBtn.addEventListener('click', () => deleteSource(s.id));
+    tdActions.appendChild(delBtn);
 
     tr.appendChild(tdActions);
     return tr;
@@ -104,24 +116,54 @@ async function loadSources() {
 document.getElementById('addSourceForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const err = document.getElementById('srcError');
+    const suc = document.getElementById('srcSuccess');
     err.style.display = 'none';
-    const fpUntil = document.getElementById('srcFirstPassUntil').value;
-    const res = await fetch('/api/sources', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            account_id: document.getElementById('srcAccount').value,
-            username: document.getElementById('srcUsername').value,
-            first_pass_until: fpUntil ? new Date(fpUntil).toISOString() : null
-        })
-    });
-    if (res.ok) {
-        e.target.reset();
-        loadSources();
-    } else {
-        const data = await res.json();
-        err.textContent = data.detail || 'Ошибка';
+    suc.style.display = 'none';
+
+    const accountId = document.getElementById('srcAccount').value;
+    const raw = document.getElementById('srcUsernames').value;
+    const usernames = raw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+    const dateFrom = document.getElementById('srcDateFrom').value;
+    const dateTo = document.getElementById('srcDateTo').value;
+
+    if (usernames.length === 0) {
+        err.textContent = 'Введите хотя бы один канал/группу';
         err.style.display = 'block';
+        return;
+    }
+
+    let added = 0;
+    let errors = [];
+    for (const username of usernames) {
+        const body = {
+            account_id: accountId,
+            username: username,
+            first_pass_until: dateFrom ? new Date(dateFrom + 'T00:00:00').toISOString() : null
+        };
+        const res = await fetch('/api/sources', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        if (res.ok) {
+            added++;
+        } else {
+            const data = await res.json();
+            errors.push(username + ': ' + (data.detail || 'Ошибка'));
+        }
+    }
+
+    if (added > 0) {
+        suc.textContent = 'Добавлено: ' + added + ' из ' + usernames.length;
+        suc.style.display = 'block';
+        loadSources();
+    }
+    if (errors.length > 0) {
+        err.textContent = errors.join('\n');
+        err.style.display = 'block';
+    }
+    if (added === usernames.length) {
+        e.target.reset();
     }
 });
 
@@ -136,6 +178,12 @@ async function toggleSource(id, active) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({is_active: active})
     });
+    loadSources();
+}
+
+async function deleteSource(id) {
+    if (!confirm('Убрать источник из отслеживания?')) return;
+    await fetch('/api/sources/' + encodeURIComponent(id), {method: 'DELETE'});
     loadSources();
 }
 

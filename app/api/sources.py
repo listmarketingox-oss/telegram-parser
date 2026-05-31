@@ -62,13 +62,18 @@ async def create_source(body: SourceCreate, db: AsyncSession = Depends(get_db)):
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Source already added for this account")
 
+    # Strip timezone to match DB column (timestamp without tz)
+    first_pass_until = body.first_pass_until
+    if first_pass_until and first_pass_until.tzinfo:
+        first_pass_until = first_pass_until.replace(tzinfo=None)
+
     source = Source(
         account_id=account.id,
         tg_entity_id=info["tg_entity_id"],
         username=info["username"],
         title=info["title"],
         type=info["type"],
-        first_pass_until=body.first_pass_until,
+        first_pass_until=first_pass_until,
     )
     db.add(source)
     await db.commit()

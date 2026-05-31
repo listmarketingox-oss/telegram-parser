@@ -24,8 +24,6 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 
-_pending_hashes: dict[uuid.UUID, str] = {}
-
 
 @router.get("", response_model=list[AccountResponse])
 async def list_accounts(db: AsyncSession = Depends(get_db)):
@@ -88,7 +86,8 @@ async def auth_start(
 
     account.session_string = encrypt(temp_session)
     account.status = AccountStatus.auth_pending
-    _pending_hashes[account.id] = phone_code_hash
+    # Store phone_code_hash in last_error field (survives server restarts)
+    account.last_error = phone_code_hash
     await db.commit()
     return AuthStartResponse(message="Code sent", phone_code_hash=phone_code_hash)
 
@@ -103,12 +102,12 @@ async def auth_confirm(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    if account.status != AccountStatus.auth_pending:
-        raise HTTPException(status_code=400, detail="Account not in auth_pending state")
+    if account.status not in (AccountStatus.auth_pending, AccountStatus.error):
+        raise HTTPException(status_code=400, detail="Account not in auth_pending state. Click 'Авторизовать' again.")
 
-    phone_code_hash = _pending_hashes.get(account.id)
+    phone_code_hash = account.last_error
     if not phone_code_hash:
-        raise HTTPException(status_code=400, detail="No pending auth — start auth first")
+        raise HTTPException(status_code=400, detail="No pending auth — click 'Авторизовать' first")
 
     api_hash = decrypt(account.api_hash)
     temp_session = decrypt(account.session_string)
@@ -132,7 +131,6 @@ async def auth_confirm(
     account.session_string = encrypt(final_session)
     account.status = AccountStatus.active
     account.last_error = None
-    _pending_hashes.pop(account.id, None)
     await db.commit()
     await db.refresh(account)
     return account

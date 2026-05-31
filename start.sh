@@ -1,10 +1,16 @@
 #!/bin/bash
-set -e
 
 export PYTHONPATH="${PYTHONPATH:-/app}"
 
+echo "=== TG Parser startup ==="
+echo "Python: $(python --version)"
+echo "Port: ${PORT:-8000}"
+
 echo "Running database migrations..."
-python -m alembic upgrade head || echo "Migration warning (may be ok on first run)"
+python -m alembic upgrade head
+if [ $? -ne 0 ]; then
+    echo "WARNING: Migrations failed, continuing..."
+fi
 
 echo "Ensuring admin user exists..."
 python -c "
@@ -26,7 +32,7 @@ async def seed():
             print('Admin user already exists')
 
 asyncio.run(seed())
-" || echo "Seed warning"
+" || echo "WARNING: Seed failed"
 
 echo "Starting web server on port ${PORT:-8000}..."
-exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info

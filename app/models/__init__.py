@@ -6,5 +6,6 @@ from app.models.keyword import Keyword
 from app.models.match import Match
 from app.models.job import Job
 from app.models.search_history import SearchHistory
+from app.models.collection import Collection, CollectionItem
 
-__all__ = ["AppUser", "TgAccount", "Source", "FilterSet", "Keyword", "Match", "Job", "SearchHistory"]
+__all__ = ["AppUser", "TgAccount", "Source", "FilterSet", "Keyword", "Match", "Job", "SearchHistory", "Collection", "CollectionItem"]

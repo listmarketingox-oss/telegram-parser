@@ -19,7 +19,11 @@
                 </div>
             </div>
             <div class="search-option">
-                <label class="form-label">Источники (пусто = все):</label>
+                <label class="form-label">Подборки:</label>
+                <div id="collectionCheckboxes" class="source-checkboxes"></div>
+            </div>
+            <div class="search-option">
+                <label class="form-label">Или отдельные источники:</label>
                 <div id="sourceCheckboxes" class="source-checkboxes"></div>
             </div>
         </div>
@@ -71,19 +75,49 @@
 <script>
 let lastKeyword = '';
 let lastSourceIds = '';
+let collectionsData = [];
+let sourcesData = [];
 
 async function loadSources() {
-    const res = await fetch('/api/sources?is_active=true');
-    const sources = await res.json();
+    const [srcRes, collRes] = await Promise.all([
+        fetch('/api/sources?is_active=true'),
+        fetch('/api/collections')
+    ]);
+    sourcesData = await srcRes.json();
+    collectionsData = await collRes.json();
+
+    // Render collections checkboxes
+    const collContainer = document.getElementById('collectionCheckboxes');
+    collContainer.replaceChildren();
+    if (collectionsData.length === 0) {
+        const hint = document.createElement('span');
+        hint.className = 'hint';
+        hint.textContent = 'Нет подборок — создайте на странице Источники';
+        collContainer.appendChild(hint);
+    }
+    collectionsData.forEach(c => {
+        const label = document.createElement('label');
+        label.className = 'source-checkbox';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = 'coll_' + c.id;
+        cb.dataset.sourceIds = c.sources.map(s => s.id).join(',');
+        cb.addEventListener('change', onCollectionToggle);
+        label.appendChild(cb);
+        const icon = document.createTextNode(' 📁 ' + c.name + ' (' + c.sources.length + ')');
+        label.appendChild(icon);
+        collContainer.appendChild(label);
+    });
+
+    // Render individual source checkboxes
     const container = document.getElementById('sourceCheckboxes');
     container.replaceChildren();
-    sources.forEach(s => {
+    sourcesData.forEach(s => {
         const label = document.createElement('label');
         label.className = 'source-checkbox';
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = s.id;
-        cb.checked = true;
         label.appendChild(cb);
         const text = document.createTextNode(' ' + s.title + (s.username ? ' (@' + s.username + ')' : ''));
         label.appendChild(text);
@@ -91,9 +125,27 @@ async function loadSources() {
     });
 }
 
+function onCollectionToggle(e) {
+    const sourceIds = e.target.dataset.sourceIds.split(',').filter(Boolean);
+    const checked = e.target.checked;
+    sourceIds.forEach(id => {
+        const cb = document.querySelector('#sourceCheckboxes input[value="' + id + '"]');
+        if (cb) cb.checked = checked;
+    });
+}
+
 function getSelectedSourceIds() {
-    const checkboxes = document.querySelectorAll('#sourceCheckboxes input[type=checkbox]:checked');
-    return Array.from(checkboxes).map(cb => cb.value);
+    // Get from individual checkboxes
+    const individual = document.querySelectorAll('#sourceCheckboxes input[type=checkbox]:checked');
+    const ids = new Set(Array.from(individual).map(cb => cb.value));
+
+    // Add from collection checkboxes
+    const collCbs = document.querySelectorAll('#collectionCheckboxes input[type=checkbox]:checked');
+    collCbs.forEach(cb => {
+        cb.dataset.sourceIds.split(',').filter(Boolean).forEach(id => ids.add(id));
+    });
+
+    return Array.from(ids);
 }
 
 function buildSearchParams() {
@@ -103,8 +155,7 @@ function buildSearchParams() {
     lastKeyword = keyword;
 
     const selected = getSelectedSourceIds();
-    const all = document.querySelectorAll('#sourceCheckboxes input[type=checkbox]');
-    if (selected.length > 0 && selected.length < all.length) {
+    if (selected.length > 0) {
         params.set('source_ids', selected.join(','));
         lastSourceIds = selected.join(',');
     } else {

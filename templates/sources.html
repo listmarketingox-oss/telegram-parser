@@ -7,18 +7,17 @@
     <h3>Добавить источники</h3>
     <p class="hint">Для закрытых каналов: сначала вручную добавьте рабочий аккаунт в канал/группу.</p>
     <form id="addSourceForm">
-        <div class="form-inline" style="margin-bottom: 12px;">
+        <div class="form-inline" style="margin-bottom:12px">
             <select id="srcAccount" required><option value="">Выберите аккаунт</option></select>
+            <select id="srcCollection"><option value="">Без подборки</option></select>
         </div>
-        <div style="margin-bottom: 12px;">
+        <div style="margin-bottom:12px">
             <label class="form-label">Каналы/группы (по одному на строку):</label>
-            <textarea id="srcUsernames" rows="5" placeholder="@channel1&#10;@channel2&#10;t.me/group3&#10;..." style="width:100%; padding:8px 12px; border:1px solid #ddd; border-radius:6px; font-size:13px;" required></textarea>
+            <textarea id="srcUsernames" rows="4" placeholder="@channel1&#10;@channel2&#10;t.me/group3" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px" required></textarea>
         </div>
-        <div class="form-inline" style="margin-bottom: 12px;">
-            <label>Период парсинга:</label>
-            <input type="date" id="srcDateFrom" title="С какой даты">
-            <span>—</span>
-            <input type="date" id="srcDateTo" title="По какую дату">
+        <div class="form-inline" style="margin-bottom:12px">
+            <label>Период:</label>
+            <input type="date" id="srcDateFrom"> <span>—</span> <input type="date" id="srcDateTo">
         </div>
         <button type="submit" class="btn btn-primary">Добавить все</button>
     </form>
@@ -26,6 +25,19 @@
     <div id="srcSuccess" class="success-msg" style="display:none"></div>
 </div>
 
+<h3 style="margin-top:28px">Подборки (папки проектов)</h3>
+
+<div class="card">
+    <form id="addCollForm" class="form-inline">
+        <input type="text" id="collName" placeholder="Название подборки" required style="flex:1">
+        <input type="text" id="collDesc" placeholder="Описание (необязательно)" style="flex:2">
+        <button type="submit" class="btn btn-primary">Создать подборку</button>
+    </form>
+</div>
+
+<div id="collectionsContainer"></div>
+
+<h3 style="margin-top:28px">Все источники</h3>
 <table class="data-table" id="sourcesTable">
     <thead>
         <tr>
@@ -33,7 +45,7 @@
             <th>Username</th>
             <th>Тип</th>
             <th>Активен</th>
-            <th>Первичный проход</th>
+            <th>Подборки</th>
             <th>Действия</th>
         </tr>
     </thead>
@@ -43,6 +55,9 @@
 
 {% block scripts %}
 <script>
+let allCollections = [];
+let allSources = [];
+
 async function loadAccounts() {
     const res = await fetch('/api/accounts');
     const accounts = await res.json();
@@ -55,63 +70,180 @@ async function loadAccounts() {
     });
 }
 
-function createSourceRow(s) {
-    const tr = document.createElement('tr');
+async function loadCollections() {
+    const res = await fetch('/api/collections');
+    allCollections = await res.json();
 
-    const tdTitle = document.createElement('td');
-    tdTitle.textContent = s.title;
-    tr.appendChild(tdTitle);
+    // Update dropdown in add-source form
+    const sel = document.getElementById('srcCollection');
+    const current = sel.value;
+    sel.replaceChildren();
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Без подборки';
+    sel.appendChild(none);
+    allCollections.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name;
+        sel.appendChild(opt);
+    });
+    if (current) sel.value = current;
 
-    const tdUser = document.createElement('td');
-    tdUser.textContent = s.username ? '@' + s.username : '—';
-    tr.appendChild(tdUser);
+    // Render collection cards
+    const container = document.getElementById('collectionsContainer');
+    container.replaceChildren();
+    allCollections.forEach(c => container.appendChild(createCollectionCard(c)));
+}
 
-    const tdType = document.createElement('td');
-    tdType.textContent = s.type;
-    tr.appendChild(tdType);
+function createCollectionCard(c) {
+    const card = document.createElement('div');
+    card.className = 'card filter-card';
+    card.style.marginBottom = '12px';
 
-    const tdActive = document.createElement('td');
-    const badge = document.createElement('span');
-    badge.className = 'badge badge-' + (s.is_active ? 'active' : 'off');
-    badge.textContent = s.is_active ? 'Да' : 'Нет';
-    tdActive.appendChild(badge);
-    tr.appendChild(tdActive);
+    const header = document.createElement('div');
+    header.className = 'filter-header';
 
-    const tdPass = document.createElement('td');
-    tdPass.textContent = s.first_pass_done ? 'Готово' : 'Ожидает';
-    tr.appendChild(tdPass);
+    const icon = document.createElement('span');
+    icon.textContent = '📁 ';
+    header.appendChild(icon);
 
-    const tdActions = document.createElement('td');
+    const title = document.createElement('h3');
+    title.textContent = c.name;
+    title.style.margin = '0';
+    header.appendChild(title);
 
-    const parseBtn = document.createElement('button');
-    parseBtn.className = 'btn btn-sm';
-    parseBtn.textContent = 'Прочесать';
-    parseBtn.addEventListener('click', () => triggerParse(s.id));
-    tdActions.appendChild(parseBtn);
+    const count = document.createElement('span');
+    count.className = 'badge badge-active';
+    count.textContent = c.sources.length + ' каналов';
+    count.style.marginLeft = '8px';
+    header.appendChild(count);
 
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'btn btn-sm';
-    toggleBtn.textContent = s.is_active ? 'Выкл' : 'Вкл';
-    toggleBtn.addEventListener('click', () => toggleSource(s.id, !s.is_active));
-    tdActions.appendChild(toggleBtn);
+    card.appendChild(header);
+
+    if (c.description) {
+        const desc = document.createElement('p');
+        desc.className = 'filter-meta';
+        desc.textContent = c.description;
+        card.appendChild(desc);
+    }
+
+    const sourcesList = document.createElement('div');
+    sourcesList.className = 'keywords-list';
+    c.sources.forEach(s => {
+        const tag = document.createElement('span');
+        tag.className = 'keyword-tag';
+        tag.textContent = s.title + (s.username ? ' @' + s.username : '');
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'keyword-remove';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', () => removeFromCollection(c.id, s.id));
+        tag.appendChild(removeBtn);
+
+        sourcesList.appendChild(tag);
+    });
+    if (c.sources.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'hint';
+        empty.textContent = 'Нет каналов — добавьте через форму выше или перетащите';
+        sourcesList.appendChild(empty);
+    }
+    card.appendChild(sourcesList);
+
+    const actions = document.createElement('div');
+    actions.className = 'filter-actions';
+
+    // Add existing source selector
+    const addSelect = document.createElement('select');
+    addSelect.style.cssText = 'padding:4px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px';
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '+ Добавить канал...';
+    addSelect.appendChild(defaultOpt);
+    allSources.forEach(s => {
+        if (!c.sources.find(cs => cs.id === s.id)) {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = s.title + (s.username ? ' @' + s.username : '');
+            addSelect.appendChild(opt);
+        }
+    });
+    addSelect.addEventListener('change', async () => {
+        if (addSelect.value) {
+            await addToCollection(c.id, addSelect.value);
+        }
+    });
+    actions.appendChild(addSelect);
 
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = 'Удалить';
-    delBtn.addEventListener('click', () => deleteSource(s.id));
-    tdActions.appendChild(delBtn);
+    delBtn.textContent = 'Удалить подборку';
+    delBtn.addEventListener('click', () => deleteCollection(c.id));
+    actions.appendChild(delBtn);
 
-    tr.appendChild(tdActions);
-    return tr;
+    card.appendChild(actions);
+    return card;
 }
 
 async function loadSources() {
     const res = await fetch('/api/sources');
-    const sources = await res.json();
+    allSources = await res.json();
     const tbody = document.querySelector('#sourcesTable tbody');
     tbody.replaceChildren();
-    sources.forEach(s => tbody.appendChild(createSourceRow(s)));
+    allSources.forEach(s => {
+        const tr = document.createElement('tr');
+
+        const tdTitle = document.createElement('td');
+        tdTitle.textContent = s.title;
+        tr.appendChild(tdTitle);
+
+        const tdUser = document.createElement('td');
+        tdUser.textContent = s.username ? '@' + s.username : '—';
+        tr.appendChild(tdUser);
+
+        const tdType = document.createElement('td');
+        tdType.textContent = s.type;
+        tr.appendChild(tdType);
+
+        const tdActive = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-' + (s.is_active ? 'active' : 'off');
+        badge.textContent = s.is_active ? 'Да' : 'Нет';
+        tdActive.appendChild(badge);
+        tr.appendChild(tdActive);
+
+        // Find which collections contain this source
+        const tdColls = document.createElement('td');
+        const inColls = allCollections.filter(c => c.sources.some(cs => cs.id === s.id));
+        tdColls.textContent = inColls.map(c => c.name).join(', ') || '—';
+        tr.appendChild(tdColls);
+
+        const tdActions = document.createElement('td');
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn btn-sm btn-danger';
+        delBtn.textContent = 'Удалить';
+        delBtn.addEventListener('click', () => deleteSource(s.id));
+        tdActions.appendChild(delBtn);
+        tr.appendChild(tdActions);
+
+        tbody.appendChild(tr);
+    });
 }
+
+document.getElementById('addCollForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await fetch('/api/collections', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            name: document.getElementById('collName').value,
+            description: document.getElementById('collDesc').value || null
+        })
+    });
+    e.target.reset();
+    await loadCollections();
+});
 
 document.getElementById('addSourceForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -121,73 +253,78 @@ document.getElementById('addSourceForm').addEventListener('submit', async (e) =>
     suc.style.display = 'none';
 
     const accountId = document.getElementById('srcAccount').value;
+    const collectionId = document.getElementById('srcCollection').value;
     const raw = document.getElementById('srcUsernames').value;
     const usernames = raw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
     const dateFrom = document.getElementById('srcDateFrom').value;
-    const dateTo = document.getElementById('srcDateTo').value;
 
-    if (usernames.length === 0) {
-        err.textContent = 'Введите хотя бы один канал/группу';
-        err.style.display = 'block';
-        return;
-    }
+    if (usernames.length === 0) { err.textContent = 'Введите каналы'; err.style.display = 'block'; return; }
 
-    let added = 0;
-    let errors = [];
+    let added = 0, errors = [];
     for (const username of usernames) {
-        const body = {
-            account_id: accountId,
-            username: username,
-            first_pass_until: dateFrom ? new Date(dateFrom + 'T00:00:00').toISOString() : null
-        };
         const res = await fetch('/api/sources', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
+            body: JSON.stringify({
+                account_id: accountId,
+                username: username,
+                first_pass_until: dateFrom ? new Date(dateFrom + 'T00:00:00').toISOString() : null
+            })
         });
         if (res.ok) {
+            const source = await res.json();
             added++;
+            // Auto-add to collection if selected
+            if (collectionId) {
+                await fetch('/api/collections/' + encodeURIComponent(collectionId) + '/sources', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ source_id: source.id })
+                });
+            }
         } else {
             const data = await res.json();
             errors.push(username + ': ' + (data.detail || 'Ошибка'));
         }
     }
-
-    if (added > 0) {
-        suc.textContent = 'Добавлено: ' + added + ' из ' + usernames.length;
-        suc.style.display = 'block';
-        loadSources();
-    }
-    if (errors.length > 0) {
-        err.textContent = errors.join('\n');
-        err.style.display = 'block';
-    }
-    if (added === usernames.length) {
-        e.target.reset();
-    }
+    if (added > 0) { suc.textContent = 'Добавлено: ' + added; suc.style.display = 'block'; }
+    if (errors.length > 0) { err.textContent = errors.join('\n'); err.style.display = 'block'; }
+    if (added === usernames.length) e.target.reset();
+    await reload();
 });
 
-async function triggerParse(id) {
-    await fetch('/api/sources/' + encodeURIComponent(id) + '/parse', {method: 'POST'});
-    alert('Задача на прочёс поставлена в очередь');
+async function addToCollection(collId, sourceId) {
+    await fetch('/api/collections/' + encodeURIComponent(collId) + '/sources', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ source_id: sourceId })
+    });
+    await reload();
 }
 
-async function toggleSource(id, active) {
-    await fetch('/api/sources/' + encodeURIComponent(id), {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({is_active: active})
-    });
-    loadSources();
+async function removeFromCollection(collId, sourceId) {
+    await fetch('/api/collections/' + encodeURIComponent(collId) + '/sources/' + encodeURIComponent(sourceId), { method: 'DELETE' });
+    await reload();
+}
+
+async function deleteCollection(id) {
+    if (!confirm('Удалить подборку? Каналы останутся.')) return;
+    await fetch('/api/collections/' + encodeURIComponent(id), { method: 'DELETE' });
+    await reload();
 }
 
 async function deleteSource(id) {
-    if (!confirm('Убрать источник из отслеживания?')) return;
-    await fetch('/api/sources/' + encodeURIComponent(id), {method: 'DELETE'});
-    loadSources();
+    if (!confirm('Убрать источник?')) return;
+    await fetch('/api/sources/' + encodeURIComponent(id), { method: 'DELETE' });
+    await reload();
+}
+
+async function reload() {
+    await loadSources();
+    await loadCollections();
 }
 
 loadAccounts();
-loadSources();
+reload();
 </script>
 {% endblock %}

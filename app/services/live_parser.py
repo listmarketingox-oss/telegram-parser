@@ -43,6 +43,7 @@ async def live_search(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     limit_per_source: int = 500,
+    expanded_terms: list[str] | None = None,
 ) -> list[dict]:
     """Search all active sources for keyword. Returns list of result dicts."""
     async with async_session() as db:
@@ -65,7 +66,15 @@ async def live_search(
         accounts = {a.id: a for a in acc_result.scalars().all()}
 
     results = []
-    pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+
+    # Build pattern from expanded terms or just the keyword
+    search_terms = expanded_terms if expanded_terms else [keyword]
+    # Sort longest first to match longer phrases before shorter ones
+    search_terms_sorted = sorted(search_terms, key=len, reverse=True)
+    pattern = re.compile(
+        "|".join(re.escape(t) for t in search_terms_sorted),
+        re.IGNORECASE
+    )
 
     # Deduplicate sources by tg_entity_id
     seen_entities = set()
@@ -111,8 +120,10 @@ async def live_search(
                         if msg_date < df:
                             break
 
-                    if not pattern.search(msg.text):
+                    match = pattern.search(msg.text)
+                    if not match:
                         continue
+                    matched_term = match.group()
 
                     # Get sender safely
                     sender = None
@@ -140,7 +151,7 @@ async def live_search(
                         "author_username": sender_username,
                         "author_display_name": sender_name,
                         "author_phone": sender_phone,
-                        "matched_keywords": [keyword],
+                        "matched_keywords": [matched_term],
                         "posted_at": msg_date.isoformat(),
                         "message_link": message_link,
                     })

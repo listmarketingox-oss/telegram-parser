@@ -9,6 +9,13 @@
             <input type="text" id="searchKeyword" placeholder="Введите ключевое слово или фразу..." class="search-input" required>
             <button type="submit" class="btn btn-primary btn-lg" id="searchBtn">Искать</button>
         </div>
+        <div style="margin:8px 0">
+            <label class="source-checkbox">
+                <input type="checkbox" id="smartSearch" checked>
+                🧠 Умный поиск (синонимы, словоформы, связанные слова через AI)
+            </label>
+        </div>
+        <div id="expandedTerms" class="keywords-list" style="display:none;margin-bottom:8px"></div>
         <div class="search-options">
             <div class="search-option">
                 <label class="form-label">Период:</label>
@@ -167,6 +174,9 @@ function buildSearchParams() {
     if (dateFrom) params.set('date_from', dateFrom + 'T00:00:00');
     if (dateTo) params.set('date_to', dateTo + 'T23:59:59');
 
+    const smart = document.getElementById('smartSearch').checked;
+    params.set('smart', smart);
+
     return params;
 }
 
@@ -237,6 +247,26 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
 
         document.getElementById('searchMeta').textContent =
             'Найдено: ' + data.total + ' совпадений по запросу "' + data.keyword + '"';
+
+        // Show expanded terms
+        const termsDiv = document.getElementById('expandedTerms');
+        if (data.expanded_terms && data.expanded_terms.length > 1) {
+            termsDiv.replaceChildren();
+            const label = document.createElement('span');
+            label.textContent = '🧠 Искали: ';
+            label.style.fontSize = '12px';
+            label.style.color = '#888';
+            termsDiv.appendChild(label);
+            data.expanded_terms.forEach(t => {
+                const tag = document.createElement('span');
+                tag.className = 'keyword-tag';
+                tag.textContent = t;
+                termsDiv.appendChild(tag);
+            });
+            termsDiv.style.display = 'flex';
+        } else {
+            termsDiv.style.display = 'none';
+        }
 
         resultsDiv.style.display = 'block';
         status.style.display = 'none';

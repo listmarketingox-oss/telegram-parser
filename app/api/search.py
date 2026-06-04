@@ -13,6 +13,7 @@ from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.search_history import SearchHistory
 from app.services.live_parser import live_search
+from app.services.query_expander import expand_query
 
 router = APIRouter(
     prefix="/search",
@@ -27,6 +28,7 @@ async def search(
     source_ids: str | None = Query(None),
     date_from: str | None = None,
     date_to: str | None = None,
+    smart: bool = Query(True),
     limit: int = Query(500, ge=10, le=2000),
     db: AsyncSession = Depends(get_db),
 ):
@@ -37,12 +39,18 @@ async def search(
     parsed_date_from = datetime.fromisoformat(date_from) if date_from else None
     parsed_date_to = datetime.fromisoformat(date_to) if date_to else None
 
+    # Smart search: expand query with related terms
+    expanded_terms = None
+    if smart:
+        expanded_terms = await expand_query(keyword)
+
     results = await live_search(
         keyword=keyword,
         source_ids=parsed_source_ids,
         date_from=parsed_date_from,
         date_to=parsed_date_to,
         limit_per_source=limit,
+        expanded_terms=expanded_terms,
     )
 
     # Save to history
@@ -56,7 +64,12 @@ async def search(
     db.add(history)
     await db.commit()
 
-    return {"results": results, "total": len(results), "keyword": keyword}
+    return {
+        "results": results,
+        "total": len(results),
+        "keyword": keyword,
+        "expanded_terms": expanded_terms,
+    }
 
 
 @router.get("/history")

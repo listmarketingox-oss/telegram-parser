@@ -63,12 +63,14 @@ async def search(
     )
     db.add(history)
     await db.commit()
+    await db.refresh(history)
 
     return {
         "results": results,
         "total": len(results),
         "keyword": keyword,
         "expanded_terms": expanded_terms,
+        "history_id": str(history.id),
     }
 
 
@@ -133,45 +135,23 @@ async def delete_search_history(
     return {"ok": True}
 
 
-@router.get("/export")
-async def search_export(
-    keyword: str = Query(..., min_length=1),
-    format: str = Query("csv", pattern="^(csv|xlsx)$"),
-    source_ids: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    limit: int = Query(500, ge=10, le=2000),
-):
-    parsed_source_ids = None
-    if source_ids:
-        parsed_source_ids = [uuid.UUID(s.strip()) for s in source_ids.split(",") if s.strip()]
-
-    parsed_date_from = datetime.fromisoformat(date_from) if date_from else None
-    parsed_date_to = datetime.fromisoformat(date_to) if date_to else None
-
-    results = await live_search(
-        keyword=keyword,
-        source_ids=parsed_source_ids,
-        date_from=parsed_date_from,
-        date_to=parsed_date_to,
-        limit_per_source=limit,
-    )
-
+def _export_results(results: list, keyword: str, fmt: str):
+    """Generate CSV or XLSX from results list."""
     headers = ["Канал", "Сообщение", "Ник", "Имя", "Телефон", "Ключ", "Дата и время", "Ссылка"]
 
     def _row(r):
         return [
-            r["source_title"],
-            r["message_text"],
+            r.get("source_title", ""),
+            r.get("message_text", ""),
             r.get("author_username") or "",
             r.get("author_display_name") or "",
             r.get("author_phone") or "",
             ", ".join(r.get("matched_keywords", [])),
-            r["posted_at"],
+            r.get("posted_at", ""),
             r.get("message_link") or "",
         ]
 
-    if format == "csv":
+    if fmt == "csv":
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(headers)
@@ -198,3 +178,19 @@ async def search_export(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=search_{keyword}.xlsx"},
     )
+
+
+@router.get("/export/{history_id}")
+async def export_from_history(
+    history_id: uuid.UUID,
+    format: str = Query("csv", pattern="^(csv|xlsx)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export saved search results by history ID."""
+    result = await db.execute(
+        select(SearchHistory).where(SearchHistory.id == history_id)
+    )
+    h = result.scalar_one_or_none()
+    if not h:
+        return {"error": "Not found"}
+    return _export_results(h.results_data or [], h.keyword, format)

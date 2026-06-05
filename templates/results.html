@@ -1,102 +1,203 @@
 {% extends "base.html" %}
 {% block title %}Результаты — TG Parser{% endblock %}
 {% block content %}
-<h2>Результаты парсинга</h2>
+<h2>Результаты и история поиска</h2>
 
 <div class="card filters-bar">
-    <form id="filterForm" class="form-inline">
-        <input type="text" id="fSearch" placeholder="Поиск по тексту сообщения">
-        <input type="text" id="fKeyword" placeholder="Ключевое слово">
-        <input type="text" id="fAuthor" placeholder="@username автора">
-        <input type="date" id="fDateFrom" title="С даты">
-        <input type="date" id="fDateTo" title="По дату">
-        <button type="submit" class="btn btn-primary">Найти</button>
-        <button type="button" class="btn" onclick="clearFilters()">Сбросить</button>
-    </form>
-    <div class="export-buttons">
-        <button class="btn btn-sm" onclick="exportData('csv')">CSV</button>
-        <button class="btn btn-sm" onclick="exportData('xlsx')">XLSX</button>
+    <div class="form-inline">
+        <select id="sortBy">
+            <option value="date_desc">Сначала новые</option>
+            <option value="date_asc">Сначала старые</option>
+            <option value="results_desc">Больше результатов</option>
+            <option value="keyword">По запросу (А-Я)</option>
+        </select>
+        <input type="text" id="filterKeyword" placeholder="Фильтр по запросу...">
+        <input type="date" id="filterDate" title="Фильтр по дате поиска">
+        <button class="btn" onclick="loadAllHistory()">Применить</button>
+        <button class="btn" onclick="clearFilters()">Сбросить</button>
     </div>
 </div>
 
-<div id="resultsMeta" class="results-meta"></div>
+<div id="historyContainer"></div>
 
-<table class="data-table" id="resultsTable">
-    <thead>
-        <tr>
-            <th>Канал</th>
-            <th>Сообщение</th>
-            <th>Ник</th>
-            <th>Телефон</th>
-            <th>Ключи</th>
-            <th>Дата и время</th>
-            <th>Ссылка</th>
-        </tr>
-    </thead>
-    <tbody></tbody>
-</table>
+<div id="detailView" style="display:none">
+    <div class="card" style="border-left:4px solid #2563eb">
+        <div class="filter-header">
+            <button class="btn btn-sm" onclick="closeDetail()">← Назад к истории</button>
+            <h3 id="detailTitle" style="margin:0"></h3>
+            <div class="export-buttons">
+                <button class="btn btn-sm" id="exportCsvBtn">CSV</button>
+                <button class="btn btn-sm" id="exportXlsxBtn">XLSX</button>
+            </div>
+        </div>
+        <div id="detailMeta" class="filter-meta" style="margin-top:8px"></div>
+    </div>
 
-<div class="pagination" id="pagination"></div>
+    <table class="data-table" id="detailTable">
+        <thead>
+            <tr>
+                <th>Канал</th>
+                <th>Сообщение</th>
+                <th>Ник</th>
+                <th>Телефон</th>
+                <th>Ключ</th>
+                <th>Дата и время</th>
+                <th>Ссылка</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-let currentPage = 1;
-const pageSize = 50;
+let allHistory = [];
 
-function buildQueryString(page) {
-    const params = new URLSearchParams();
-    params.set('page', page);
-    params.set('page_size', pageSize);
-    const fKeyword = document.getElementById('fKeyword').value;
-    const fAuthor = document.getElementById('fAuthor').value;
-    const fSearch = document.getElementById('fSearch').value;
-    const fDateFrom = document.getElementById('fDateFrom').value;
-    const fDateTo = document.getElementById('fDateTo').value;
-    if (fKeyword) params.set('keyword', fKeyword);
-    if (fAuthor) params.set('author_username', fAuthor);
-    if (fSearch) params.set('search', fSearch);
-    if (fDateFrom) params.set('date_from', fDateFrom + 'T00:00:00');
-    if (fDateTo) params.set('date_to', fDateTo + 'T23:59:59');
-    return params.toString();
+function createHistoryCard(h) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.cssText = 'cursor:pointer;transition:box-shadow 0.15s;margin-bottom:12px;border-left:4px solid #2563eb';
+    card.addEventListener('mouseenter', () => card.style.boxShadow = '0 2px 12px rgba(37,99,235,0.15)');
+    card.addEventListener('mouseleave', () => card.style.boxShadow = '');
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between';
+
+    const left = document.createElement('div');
+    left.style.cssText = 'display:flex;align-items:center;gap:12px';
+
+    const keyword = document.createElement('span');
+    keyword.style.cssText = 'font-size:18px;font-weight:700;color:#1a1a2e';
+    keyword.textContent = '🔍 ' + h.keyword;
+    left.appendChild(keyword);
+
+    const countBadge = document.createElement('span');
+    countBadge.className = 'badge ' + (h.results_count > 0 ? 'badge-active' : 'badge-off');
+    countBadge.textContent = h.results_count + ' результатов';
+    left.appendChild(countBadge);
+
+    header.appendChild(left);
+
+    const right = document.createElement('div');
+    right.style.cssText = 'display:flex;align-items:center;gap:8px';
+
+    const date = document.createElement('span');
+    date.style.cssText = 'font-size:13px;color:#888';
+    date.textContent = new Date(h.created_at).toLocaleString('ru');
+    right.appendChild(date);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-danger';
+    delBtn.textContent = 'Удалить';
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteEntry(h.id); });
+    right.appendChild(delBtn);
+
+    header.appendChild(right);
+    card.appendChild(header);
+
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size:13px;color:#888;margin-top:6px';
+    const parts = [];
+    if (h.date_from) parts.push('с ' + h.date_from.substring(0, 10));
+    if (h.date_to) parts.push('по ' + h.date_to.substring(0, 10));
+    meta.textContent = parts.length ? 'Период: ' + parts.join(' ') : 'Весь период';
+    card.appendChild(meta);
+
+    card.addEventListener('click', () => showDetail(h.id));
+    return card;
 }
 
-function createResultRow(m) {
+async function loadAllHistory() {
+    const res = await fetch('/api/search/history?limit=200');
+    allHistory = await res.json();
+
+    // Apply filters
+    let filtered = [...allHistory];
+    const filterKw = document.getElementById('filterKeyword').value.toLowerCase();
+    if (filterKw) {
+        filtered = filtered.filter(h => h.keyword.toLowerCase().includes(filterKw));
+    }
+    const filterDate = document.getElementById('filterDate').value;
+    if (filterDate) {
+        filtered = filtered.filter(h => h.created_at && h.created_at.startsWith(filterDate));
+    }
+
+    // Apply sort
+    const sortBy = document.getElementById('sortBy').value;
+    if (sortBy === 'date_asc') filtered.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    else if (sortBy === 'results_desc') filtered.sort((a, b) => b.results_count - a.results_count);
+    else if (sortBy === 'keyword') filtered.sort((a, b) => a.keyword.localeCompare(b.keyword));
+    // date_desc is default from API
+
+    // Group by date
+    const grouped = {};
+    filtered.forEach(h => {
+        const day = h.created_at ? h.created_at.substring(0, 10) : 'unknown';
+        if (!grouped[day]) grouped[day] = [];
+        grouped[day].push(h);
+    });
+
+    const container = document.getElementById('historyContainer');
+    container.replaceChildren();
+
+    if (filtered.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'card';
+        empty.style.textAlign = 'center';
+        empty.style.color = '#888';
+        empty.textContent = 'Нет сохранённых результатов. Сделайте поиск на странице «Поиск».';
+        container.appendChild(empty);
+        return;
+    }
+
+    Object.keys(grouped).sort().reverse().forEach(day => {
+        const dayLabel = document.createElement('h3');
+        dayLabel.style.cssText = 'margin:20px 0 8px;color:#555;font-size:14px';
+        const d = new Date(day + 'T00:00:00');
+        dayLabel.textContent = '📅 ' + d.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+        container.appendChild(dayLabel);
+
+        grouped[day].forEach(h => container.appendChild(createHistoryCard(h)));
+    });
+}
+
+function createRow(r) {
     const tr = document.createElement('tr');
 
     const tdChannel = document.createElement('td');
-    tdChannel.textContent = m.source_title || '—';
+    tdChannel.textContent = r.source_title || '—';
+    tdChannel.style.whiteSpace = 'nowrap';
     tr.appendChild(tdChannel);
 
     const tdText = document.createElement('td');
     tdText.className = 'text-cell';
-    const text = m.message_text || '';
+    const text = r.message_text || '';
     tdText.textContent = text.length > 200 ? text.substring(0, 200) + '...' : text;
     tdText.title = text;
     tr.appendChild(tdText);
 
     const tdAuthor = document.createElement('td');
-    const nick = m.author_username ? '@' + m.author_username : (m.author_display_name || '—');
-    tdAuthor.textContent = nick;
+    tdAuthor.textContent = r.author_username ? '@' + r.author_username : (r.author_display_name || '—');
     tr.appendChild(tdAuthor);
 
     const tdPhone = document.createElement('td');
-    tdPhone.textContent = m.author_phone || '—';
+    tdPhone.textContent = r.author_phone || '—';
     tr.appendChild(tdPhone);
 
-    const tdKeys = document.createElement('td');
-    tdKeys.textContent = (m.matched_keywords || []).join(', ');
-    tr.appendChild(tdKeys);
+    const tdKey = document.createElement('td');
+    tdKey.textContent = (r.matched_keywords || []).join(', ');
+    tr.appendChild(tdKey);
 
     const tdDate = document.createElement('td');
-    tdDate.textContent = new Date(m.posted_at).toLocaleString('ru');
+    tdDate.textContent = new Date(r.posted_at).toLocaleString('ru');
     tdDate.style.whiteSpace = 'nowrap';
     tr.appendChild(tdDate);
 
     const tdLink = document.createElement('td');
-    if (m.message_link) {
+    if (r.message_link) {
         const a = document.createElement('a');
-        a.href = m.message_link;
+        a.href = r.message_link;
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
         a.textContent = 'Открыть';
@@ -109,68 +210,52 @@ function createResultRow(m) {
     return tr;
 }
 
-async function loadResults(page) {
-    currentPage = page || 1;
-    const qs = buildQueryString(currentPage);
-    const res = await fetch('/api/matches?' + qs);
+async function showDetail(historyId) {
+    const res = await fetch('/api/search/history/' + encodeURIComponent(historyId));
     const data = await res.json();
 
-    const tbody = document.querySelector('#resultsTable tbody');
+    document.getElementById('detailTitle').textContent = '🔍 «' + data.keyword + '»';
+
+    const parts = [];
+    parts.push(data.results_count + ' результатов');
+    if (data.date_from) parts.push('с ' + data.date_from.substring(0, 10));
+    if (data.date_to) parts.push('по ' + data.date_to.substring(0, 10));
+    parts.push('Поиск: ' + new Date(data.created_at).toLocaleString('ru'));
+    document.getElementById('detailMeta').textContent = parts.join(' | ');
+
+    const tbody = document.querySelector('#detailTable tbody');
     tbody.replaceChildren();
-    data.items.forEach(m => tbody.appendChild(createResultRow(m)));
+    (data.results || []).forEach(r => tbody.appendChild(createRow(r)));
 
-    const meta = document.getElementById('resultsMeta');
-    const totalPages = Math.ceil(data.total / data.page_size) || 1;
-    meta.textContent = 'Найдено: ' + data.total + ' | Страница ' + data.page + ' из ' + totalPages;
+    document.getElementById('exportCsvBtn').onclick = () =>
+        window.open('/api/search/export/' + encodeURIComponent(historyId) + '?format=csv');
+    document.getElementById('exportXlsxBtn').onclick = () =>
+        window.open('/api/search/export/' + encodeURIComponent(historyId) + '?format=xlsx');
 
-    renderPagination(data.total, data.page, data.page_size);
+    document.getElementById('historyContainer').style.display = 'none';
+    document.querySelector('.filters-bar').style.display = 'none';
+    document.getElementById('detailView').style.display = 'block';
 }
 
-function renderPagination(total, page, size) {
-    const container = document.getElementById('pagination');
-    container.replaceChildren();
-    const totalPages = Math.ceil(total / size);
-    if (totalPages <= 1) return;
+function closeDetail() {
+    document.getElementById('detailView').style.display = 'none';
+    document.getElementById('historyContainer').style.display = 'block';
+    document.querySelector('.filters-bar').style.display = 'flex';
+}
 
-    for (let i = 1; i <= Math.min(totalPages, 20); i++) {
-        const btn = document.createElement('button');
-        btn.className = 'btn btn-sm' + (i === page ? ' btn-primary' : '');
-        btn.textContent = i;
-        btn.addEventListener('click', () => loadResults(i));
-        container.appendChild(btn);
-    }
+async function deleteEntry(id) {
+    if (!confirm('Удалить запись из истории?')) return;
+    await fetch('/api/search/history/' + encodeURIComponent(id), { method: 'DELETE' });
+    loadAllHistory();
 }
 
 function clearFilters() {
-    document.getElementById('fSearch').value = '';
-    document.getElementById('fKeyword').value = '';
-    document.getElementById('fAuthor').value = '';
-    document.getElementById('fDateFrom').value = '';
-    document.getElementById('fDateTo').value = '';
-    loadResults(1);
+    document.getElementById('filterKeyword').value = '';
+    document.getElementById('filterDate').value = '';
+    document.getElementById('sortBy').value = 'date_desc';
+    loadAllHistory();
 }
 
-function exportData(format) {
-    const params = new URLSearchParams();
-    params.set('format', format);
-    const fKeyword = document.getElementById('fKeyword').value;
-    const fAuthor = document.getElementById('fAuthor').value;
-    const fSearch = document.getElementById('fSearch').value;
-    const fDateFrom = document.getElementById('fDateFrom').value;
-    const fDateTo = document.getElementById('fDateTo').value;
-    if (fKeyword) params.set('keyword', fKeyword);
-    if (fAuthor) params.set('author_username', fAuthor);
-    if (fSearch) params.set('search', fSearch);
-    if (fDateFrom) params.set('date_from', fDateFrom + 'T00:00:00');
-    if (fDateTo) params.set('date_to', fDateTo + 'T23:59:59');
-    window.open('/api/matches/export?' + params.toString());
-}
-
-document.getElementById('filterForm').addEventListener('submit', (e) => {
-    e.preventDefault();
-    loadResults(1);
-});
-
-loadResults(1);
+loadAllHistory();
 </script>
 {% endblock %}

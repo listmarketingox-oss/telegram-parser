@@ -1,10 +1,11 @@
 """Live search API — parse all sources for a keyword right now + history."""
 import csv
 import io
+import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,8 @@ from app.database import get_db
 from app.models.search_history import SearchHistory
 from app.services.live_parser import live_search
 from app.services.query_expander import expand_query
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/search",
@@ -137,47 +140,57 @@ async def delete_search_history(
 
 def _export_results(results: list, keyword: str, fmt: str):
     """Generate CSV or XLSX from results list."""
-    headers = ["Канал", "Сообщение", "Ник", "Имя", "Телефон", "Ключ", "Дата и время", "Ссылка"]
+    try:
+        headers = ["Канал", "Сообщение", "Ник", "Имя", "Телефон", "Ключ", "Дата и время", "Ссылка"]
 
-    def _row(r):
-        return [
-            r.get("source_title", ""),
-            r.get("message_text", ""),
-            r.get("author_username") or "",
-            r.get("author_display_name") or "",
-            r.get("author_phone") or "",
-            ", ".join(r.get("matched_keywords", [])),
-            r.get("posted_at", ""),
-            r.get("message_link") or "",
-        ]
+        def _row(r):
+            # Safely convert all fields to strings
+            return [
+                str(r.get("source_title", "")).strip(),
+                str(r.get("message_text", "")).strip(),
+                str(r.get("author_username") or "").strip(),
+                str(r.get("author_display_name") or "").strip(),
+                str(r.get("author_phone") or "").strip(),
+                ", ".join(str(k) for k in (r.get("matched_keywords") or [])),
+                str(r.get("posted_at", "")).strip(),
+                str(r.get("message_link") or "").strip(),
+            ]
 
-    if fmt == "csv":
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(headers)
+        if fmt == "csv":
+            output = io.StringIO()
+            writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+            writer.writerow(headers)
+            for r in results:
+                writer.writerow(_row(r))
+            csv_content = output.getvalue()
+            logger.info("Generated CSV: %d rows", len(results))
+            return Response(
+                content=csv_content.encode('utf-8-sig'),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f"attachment; filename=search_{keyword}.csv"},
+            )
+
+        # XLSX export
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(headers)
         for r in results:
-            writer.writerow(_row(r))
-        csv_content = output.getvalue()
-        return Response(
-            content=csv_content.encode('utf-8-sig'),
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename=search_{keyword}.csv"},
-        )
+            ws.append(_row(r))
 
-    from openpyxl import Workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.append(headers)
-    for r in results:
-        ws.append(_row(r))
-    output = io.BytesIO()
-    wb.save(output)
-    xlsx_content = output.getvalue()
-    return Response(
-        content=xlsx_content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=search_{keyword}.xlsx"},
-    )
+        output = io.BytesIO()
+        wb.save(output)
+        xlsx_content = output.getvalue()
+        logger.info("Generated XLSX: %d rows", len(results))
+
+        return Response(
+            content=xlsx_content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=search_{keyword}.xlsx"},
+        )
+    except Exception as e:
+        logger.error("Export generation failed: %s", e, exc_info=True)
+        raise
 
 
 @router.get("/export/{history_id}")
@@ -187,10 +200,17 @@ async def export_from_history(
     db: AsyncSession = Depends(get_db),
 ):
     """Export saved search results by history ID."""
-    result = await db.execute(
-        select(SearchHistory).where(SearchHistory.id == history_id)
-    )
-    h = result.scalar_one_or_none()
-    if not h:
-        return {"error": "Not found"}
-    return _export_results(h.results_data or [], h.keyword, format)
+    try:
+        result = await db.execute(
+            select(SearchHistory).where(SearchHistory.id == history_id)
+        )
+        h = result.scalar_one_or_none()
+        if not h:
+            logger.warning("History not found: %s", history_id)
+            raise HTTPException(status_code=404, detail="Результаты поиска не найдены")
+
+        logger.info("Exporting %d results as %s", len(h.results_data or []), format)
+        return _export_results(h.results_data or [], h.keyword, format)
+    except Exception as e:
+        logger.error("Export error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка экспорта: {str(e)}")

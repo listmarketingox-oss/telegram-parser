@@ -157,17 +157,24 @@ def _export_results(results: list, keyword: str, fmt: str):
             ]
 
         if fmt == "csv":
-            # Use BytesIO with TextIOWrapper to handle UTF-8 properly
-            output = io.BytesIO()
-            text_wrapper = io.TextIOWrapper(output, encoding='utf-8', newline='')
-            writer = csv.writer(text_wrapper, quoting=csv.QUOTE_ALL)
-            writer.writerow(headers)
+            # Build CSV manually to avoid encoding issues
+            lines = []
+
+            # Header row with proper escaping
+            header_row = ",".join(f'"{h}"' for h in headers)
+            lines.append(header_row)
+
+            # Data rows
             for r in results:
-                writer.writerow(_row(r))
-            text_wrapper.flush()
-            text_wrapper.detach()  # Detach wrapper to get BytesIO
-            csv_bytes = output.getvalue()
+                row = _row(r)
+                # Escape quotes and wrap in quotes
+                escaped_row = [f'"{str(cell).replace(chr(34), chr(34)+chr(34))}"' for cell in row]
+                lines.append(",".join(escaped_row))
+
+            csv_text = "\n".join(lines)
+            csv_bytes = csv_text.encode('utf-8')
             logger.info("Generated CSV: %d rows, %d bytes", len(results), len(csv_bytes))
+
             return Response(
                 content=csv_bytes,
                 media_type="text/csv; charset=utf-8",

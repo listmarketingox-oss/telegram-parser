@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,10 +157,10 @@ def _export_results(results: list, keyword: str, fmt: str):
         writer.writerow(headers)
         for r in results:
             writer.writerow(_row(r))
-        output.seek(0)
-        return StreamingResponse(
-            output,
-            media_type="text/csv",
+        csv_content = output.getvalue()
+        return Response(
+            content=csv_content.encode('utf-8-sig'),
+            media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f"attachment; filename=search_{keyword}.csv"},
         )
 
@@ -172,9 +172,9 @@ def _export_results(results: list, keyword: str, fmt: str):
         ws.append(_row(r))
     output = io.BytesIO()
     wb.save(output)
-    output.seek(0)
-    return StreamingResponse(
-        output,
+    xlsx_content = output.getvalue()
+    return Response(
+        content=xlsx_content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=search_{keyword}.xlsx"},
     )

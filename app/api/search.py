@@ -157,15 +157,19 @@ def _export_results(results: list, keyword: str, fmt: str):
             ]
 
         if fmt == "csv":
-            output = io.StringIO()
-            writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+            # Use BytesIO with TextIOWrapper to handle UTF-8 properly
+            output = io.BytesIO()
+            text_wrapper = io.TextIOWrapper(output, encoding='utf-8', newline='')
+            writer = csv.writer(text_wrapper, quoting=csv.QUOTE_ALL)
             writer.writerow(headers)
             for r in results:
                 writer.writerow(_row(r))
-            csv_content = output.getvalue()
-            logger.info("Generated CSV: %d rows", len(results))
+            text_wrapper.flush()
+            text_wrapper.detach()  # Detach wrapper to get BytesIO
+            csv_bytes = output.getvalue()
+            logger.info("Generated CSV: %d rows, %d bytes", len(results), len(csv_bytes))
             return Response(
-                content=csv_content.encode('utf-8-sig'),
+                content=csv_bytes,
                 media_type="text/csv; charset=utf-8",
                 headers={"Content-Disposition": f"attachment; filename=search_{keyword}.csv"},
             )

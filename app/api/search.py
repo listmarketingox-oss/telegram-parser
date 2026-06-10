@@ -15,6 +15,7 @@ from app.database import get_db
 from app.models.search_history import SearchHistory
 from app.services.live_parser import live_search
 from app.services.query_expander import expand_query
+from app.services.query_processor import process_query
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ async def search(
     date_from: str | None = None,
     date_to: str | None = None,
     smart: bool = Query(True),
+    mode: str = Query("smart", pattern="^(exact|smart|aggressive)$"),
     limit: int = Query(500, ge=10, le=2000),
     db: AsyncSession = Depends(get_db),
 ):
@@ -42,9 +44,13 @@ async def search(
     parsed_date_from = datetime.fromisoformat(date_from) if date_from else None
     parsed_date_to = datetime.fromisoformat(date_to) if date_to else None
 
-    # Smart search: expand query with related terms
+    # Process query based on mode
     expanded_terms = None
-    if smart:
+    if mode != "exact":
+        # Use new query processor for lemmatization, typos, fuzzy
+        expanded_terms = await process_query(keyword, mode)
+    elif smart:
+        # Fallback: if exact mode but smart flag enabled, use Claude
         expanded_terms = await expand_query(keyword)
 
     results = await live_search(

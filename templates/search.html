@@ -10,10 +10,21 @@
             <button type="submit" class="btn btn-primary btn-lg" id="searchBtn">Искать</button>
         </div>
         <div style="margin:8px 0">
-            <label class="source-checkbox">
-                <input type="checkbox" id="smartSearch" checked>
-                🧠 Умный поиск (синонимы, словоформы, связанные слова через AI)
-            </label>
+            <label class="form-label">Режим поиска:</label>
+            <div style="display:flex;gap:12px;margin-bottom:8px">
+                <label class="source-checkbox">
+                    <input type="radio" name="searchMode" value="exact">
+                    🎯 Точный
+                </label>
+                <label class="source-checkbox">
+                    <input type="radio" name="searchMode" value="smart" checked>
+                    🧠 Умный (лемма, опечатки)
+                </label>
+                <label class="source-checkbox">
+                    <input type="radio" name="searchMode" value="aggressive">
+                    🚀 Очень умный (+ fuzzy)
+                </label>
+            </div>
         </div>
         <div id="expandedTerms" class="keywords-list" style="display:none;margin-bottom:8px"></div>
         <div class="search-options">
@@ -177,6 +188,10 @@ function buildSearchParams() {
 
     const smart = document.getElementById('smartSearch').checked;
     params.set('smart', smart);
+
+    // Search mode (exact, smart, aggressive)
+    const mode = document.querySelector('input[name="searchMode"]:checked').value;
+    params.set('mode', mode);
 
     return params;
 }

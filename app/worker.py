@@ -17,14 +17,19 @@ from telethon.sessions import StringSession
 
 from app.config import settings
 from app.database import async_session
+from app.models.agent import Agent
+from app.models.agent_result import AgentResult
 from app.models.filter_set import FilterSet
 from app.models.job import Job, JobStatus, JobType
 from app.models.keyword import Keyword
 from app.models.match import Match
+from app.models.notification import Notification
 from app.models.source import Source
 from app.models.tg_account import AccountStatus, TgAccount
 from app.services.encryption import decrypt
+from app.services.live_parser import live_search
 from app.services.matcher import match_message
+from app.services.query_processor import process_query
 
 logging.basicConfig(
     level=logging.INFO,
@@ -242,11 +247,14 @@ async def process_jobs():
             await db.commit()
 
             try:
-                source_id = uuid.UUID(job.payload["source_id"])
                 if job.type == JobType.first_pass:
+                    source_id = uuid.UUID(job.payload["source_id"])
                     await parse_source(source_id, is_first_pass=True)
                 elif job.type == JobType.parse_source:
+                    source_id = uuid.UUID(job.payload["source_id"])
                     await parse_source(source_id)
+                elif job.type == JobType.agent_monitor:
+                    await _process_agent_job(db, job)
                 job.status = JobStatus.done
             except Exception as e:
                 logger.error("Job %s failed: %s", job.id, e)
@@ -271,6 +279,91 @@ async def scheduled_parse():
         await asyncio.sleep(BATCH_DELAY)
 
 
+async def _process_agent_job(db: AsyncSession, job: Job):
+    """Process agent monitoring job."""
+    agent_id = uuid.UUID(job.payload['agent_id'])
+    keywords = job.payload['keywords']
+    source_ids = job.payload.get('source_ids', [])
+    collection_ids = job.payload.get('collection_ids', [])
+    mode = job.payload['search_mode']
+
+    # Convert source_ids strings to UUIDs
+    source_uuids = [uuid.UUID(s) if isinstance(s, str) else s for s in source_ids]
+
+    # Search all keywords, collect matches
+    all_matches = []
+    for keyword in keywords:
+        try:
+            # Expand query based on mode
+            expanded_terms = await process_query(keyword, mode)
+
+            # Search with expanded terms
+            matches = await live_search(
+                keyword=keyword,
+                source_ids=source_uuids if source_uuids else None,
+                expanded_terms=expanded_terms,
+            )
+            all_matches.extend(matches)
+        except Exception as e:
+            logger.error(f"Agent {agent_id} keyword {keyword} failed: {e}")
+            continue
+
+    # Save results
+    result = AgentResult(
+        agent_id=agent_id,
+        found_count=len(all_matches),
+        matches=all_matches
+    )
+    db.add(result)
+    await db.flush()  # Get result.id
+
+    # Create notification if matches found
+    agent = await db.get(Agent, agent_id)
+    if agent and all_matches:
+        notification = Notification(
+            user_id=agent.user_id,
+            type='agent_found',
+            agent_id=agent_id,
+            agent_result_id=result.id,
+            title=f"Agent '{agent.name}' found {len(all_matches)} matches"
+        )
+        db.add(notification)
+
+    # Update agent stats
+    if agent:
+        agent.last_run_at = datetime.now(timezone.utc)
+        agent.results_count += len(all_matches)
+
+    logger.info(f"Agent {agent_id} completed: {len(all_matches)} matches")
+
+
+async def check_active_agents():
+    """Check all active agents and create jobs (hourly 8-20)."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(Agent).where(Agent.is_active == True)
+        )
+        agents = result.scalars().all()
+
+        for agent in agents:
+            job = Job(
+                type=JobType.agent_monitor,
+                payload={
+                    'agent_id': str(agent.id),
+                    'keywords': agent.keywords,
+                    'source_ids': agent.source_ids,
+                    'collection_ids': agent.collection_ids,
+                    'search_mode': agent.search_mode,
+                },
+                status=JobStatus.queued
+            )
+            db.add(job)
+
+        if agents:
+            await db.commit()
+            logger.info("Created %d agent monitor jobs", len(agents))
+
+
 async def main():
     logger.info("Worker starting, parse interval: %d min", settings.PARSE_INTERVAL_MINUTES)
 
@@ -286,6 +379,13 @@ async def main():
         "interval",
         seconds=15,
         id="process_jobs",
+    )
+    scheduler.add_job(
+        check_active_agents,
+        "cron",
+        hour="8-20",
+        minute="0",
+        id="check_active_agents",
     )
     scheduler.start()
 

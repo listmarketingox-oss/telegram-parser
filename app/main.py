@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api import accounts, auth, collections, filter_sets, jobs, matches, pages, search, sources, users
+from app.api import accounts, agents, auth, collections, filter_sets, jobs, matches, pages, search, sources, users
 from app.database import async_session
 
 app = FastAPI(title="Telegram Parser", version="1.0.0")
@@ -18,6 +18,7 @@ app.include_router(matches.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(collections.router, prefix="/api")
+app.include_router(agents.router, prefix="/api")
 app.include_router(pages.router)
 
 

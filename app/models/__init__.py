@@ -7,5 +7,22 @@ from app.models.match import Match
 from app.models.job import Job
 from app.models.search_history import SearchHistory
 from app.models.collection import Collection, CollectionItem
+from app.models.agent import Agent
+from app.models.agent_result import AgentResult
+from app.models.notification import Notification
 
-__all__ = ["AppUser", "TgAccount", "Source", "FilterSet", "Keyword", "Match", "Job", "SearchHistory", "Collection", "CollectionItem"]
+__all__ = [
+    "AppUser",
+    "TgAccount",
+    "Source",
+    "FilterSet",
+    "Keyword",
+    "Match",
+    "Job",
+    "SearchHistory",
+    "Collection",
+    "CollectionItem",
+    "Agent",
+    "AgentResult",
+    "Notification",
+]

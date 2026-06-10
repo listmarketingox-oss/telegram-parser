@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}Агенты — TG Parser{% endblock %}
+{% block content %}
+<h2>Мониторинг и агенты</h2>
+
+<div class="card">
+    <h3>Создать новый агент</h3>
+    <form id="createAgentForm">
+        <div class="form-inline" style="margin-bottom:12px">
+            <input type="text" id="agentName" placeholder="Название агента" required style="flex:1">
+            <button type="submit" class="btn btn-primary">Создать</button>
+        </div>
+        <div style="margin-bottom:12px">
+            <label class="form-label">Ключевые слова (по одному на строку):</label>
+            <textarea id="agentKeywords" rows="4" placeholder="ставка&#10;кредит&#10;процент" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px" required></textarea>
+        </div>
+        <div style="margin-bottom:12px">
+            <label class="form-label">Источники (пусто = все):</label>
+            <div id="agentSourceCheckboxes" class="source-checkboxes" style="margin-bottom:8px"></div>
+        </div>
+        <div style="margin-bottom:12px">
+            <label class="form-label">Или выберите подборку:</label>
+            <select id="agentCollection" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px">
+                <option value="">Без подборки</option>
+            </select>
+        </div>
+        <div style="margin-bottom:12px">
+            <label class="form-label">Режим поиска:</label>
+            <div style="display:flex;gap:8px">
+                <label><input type="radio" name="agentMode" value="exact"> 🎯 Точный</label>
+                <label><input type="radio" name="agentMode" value="smart" checked> 🧠 Умный</label>
+                <label><input type="radio" name="agentMode" value="aggressive"> 🚀 Очень умный</label>
+            </div>
+        </div>
+        <div class="hint" style="font-size:12px;color:#888;margin-bottom:12px">
+            ⏰ Расписание: каждый час с 8:00 до 20:00 (по московскому времени)
+        </div>
+        <div id="createError" class="error-msg" style="display:none"></div>
+        <div id="createSuccess" class="success-msg" style="display:none"></div>
+    </form>
+</div>
+
+<h3 style="margin-top:28px">Активные агенты</h3>
+<table class="data-table" id="agentsTable">
+    <thead>
+        <tr>
+            <th>Название</th>
+            <th>Ключевые слова</th>
+            <th>Режим</th>
+            <th>Статус</th>
+            <th>Последний запуск</th>
+            <th>Всего найдено</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<h3 style="margin-top:28px">📬 Последние уведомления</h3>
+<div id="notificationsPanel" style="max-height:400px;overflow-y:auto"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allAgents = [];
+let allSources = [];
+let allCollections = [];
+
+async function loadSources() {
+    const res = await fetch('/api/sources?is_active=true');
+    allSources = await res.json();
+    const container = document.getElementById('agentSourceCheckboxes');
+    container.replaceChildren();
+    allSources.forEach(s => {
+        const label = document.createElement('label');
+        label.className = 'source-checkbox';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = s.id;
+        label.appendChild(cb);
+        const text = document.createTextNode(' ' + s.title);
+        label.appendChild(text);
+        container.appendChild(label);
+    });
+}
+
+async function loadCollections() {
+    const res = await fetch('/api/collections');
+    allCollections = await res.json();
+    const sel = document.getElementById('agentCollection');
+    allCollections.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name + ' (' + c.sources.length + ')';
+        sel.appendChild(opt);
+    });
+}
+
+async function loadAgents() {
+    const res = await fetch('/api/agents');
+    allAgents = await res.json();
+    const tbody = document.querySelector('#agentsTable tbody');
+    tbody.replaceChildren();
+
+    if (allAgents.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 7;
+        td.style.textAlign = 'center';
+        td.style.color = '#888';
+        td.textContent = 'Агентов нет. Создайте первого!';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    allAgents.forEach(a => {
+        const tr = document.createElement('tr');
+
+        const tdName = document.createElement('td');
+        tdName.textContent = a.name;
+        tr.appendChild(tdName);
+
+        const tdKeywords = document.createElement('td');
+        tdKeywords.textContent = (a.keywords || []).join(', ');
+        tr.appendChild(tdKeywords);
+
+        const tdMode = document.createElement('td');
+        const modeEmoji = {'exact': '🎯', 'smart': '🧠', 'aggressive': '🚀'}[a.search_mode] || '?';
+        tdMode.textContent = modeEmoji + ' ' + a.search_mode;
+        tr.appendChild(tdMode);
+
+        const tdStatus = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-' + (a.is_active ? 'active' : 'off');
+        badge.textContent = a.is_active ? '✓ Активен' : '○ Отключён';
+        tdStatus.appendChild(badge);
+        tr.appendChild(tdStatus);
+
+        const tdLastRun = document.createElement('td');
+        if (a.last_run_at) {
+            tdLastRun.textContent = new Date(a.last_run_at).toLocaleString('ru');
+        } else {
+            tdLastRun.textContent = '—';
+            tdLastRun.style.color = '#888';
+        }
+        tr.appendChild(tdLastRun);
+
+        const tdCount = document.createElement('td');
+        tdCount.textContent = a.results_count;
+        tr.appendChild(tdCount);
+
+        const tdActions = document.createElement('td');
+        const btnToggle = document.createElement('button');
+        btnToggle.className = 'btn btn-sm';
+        btnToggle.textContent = a.is_active ? '⏸' : '▶';
+        btnToggle.addEventListener('click', () => toggleAgent(a.id));
+        tdActions.appendChild(btnToggle);
+
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'btn btn-sm';
+        btnEdit.textContent = '✎ Редактировать';
+        btnEdit.addEventListener('click', () => editAgent(a.id));
+        tdActions.appendChild(btnEdit);
+
+        const btnView = document.createElement('button');
+        btnView.className = 'btn btn-sm';
+        btnView.textContent = '📊 Результаты';
+        btnView.addEventListener('click', () => viewResults(a.id));
+        tdActions.appendChild(btnView);
+
+        const btnDelete = document.createElement('button');
+        btnDelete.className = 'btn btn-sm btn-danger';
+        btnDelete.textContent = 'Удалить';
+        btnDelete.addEventListener('click', () => deleteAgent(a.id));
+        tdActions.appendChild(btnDelete);
+
+        tr.appendChild(tdActions);
+        tbody.appendChild(tr);
+    });
+}
+
+async function loadNotifications() {
+    const res = await fetch('/api/agents/notifications/list');
+    const notifs = await res.json();
+    const panel = document.getElementById('notificationsPanel');
+    panel.replaceChildren();
+
+    if (notifs.length === 0) {
+        const div = document.createElement('div');
+        div.className = 'card';
+        div.style.textAlign = 'center';
+        div.style.color = '#888';
+        div.textContent = 'Уведомлений нет';
+        panel.appendChild(div);
+        return;
+    }
+
+    notifs.forEach(n => {
+        const div = document.createElement('div');
+        div.className = 'card';
+        div.style.marginBottom = '8px';
+        div.style.padding = '12px';
+        div.style.backgroundColor = n.is_read ? '#f9f9f9' : '#fffbf0';
+        div.style.borderLeft = n.is_read ? '3px solid #ddd' : '3px solid #ff9800';
+
+        const title = document.createElement('strong');
+        title.textContent = n.title;
+        div.appendChild(title);
+
+        const time = document.createElement('span');
+        time.style.fontSize = '12px';
+        time.style.color = '#888';
+        time.style.marginLeft = '8px';
+        time.textContent = new Date(n.created_at).toLocaleString('ru');
+        div.appendChild(time);
+
+        const actions = document.createElement('div');
+        actions.style.marginTop = '8px';
+        actions.style.display = 'flex';
+        actions.style.gap = '8px';
+
+        const btnView = document.createElement('button');
+        btnView.className = 'btn btn-sm';
+        btnView.textContent = 'Открыть';
+        btnView.addEventListener('click', () => viewResults(n.agent_id));
+        actions.appendChild(btnView);
+
+        if (!n.is_read) {
+            const btnRead = document.createElement('button');
+            btnRead.className = 'btn btn-sm';
+            btnRead.textContent = '✓ Прочитано';
+            btnRead.addEventListener('click', () => markNotifRead(n.id));
+            actions.appendChild(btnRead);
+        }
+
+        div.appendChild(actions);
+        panel.appendChild(div);
+    });
+}
+
+document.getElementById('createAgentForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('createError');
+    const suc = document.getElementById('createSuccess');
+    err.style.display = 'none';
+    suc.style.display = 'none';
+
+    const name = document.getElementById('agentName').value.trim();
+    const keywords = document.getElementById('agentKeywords').value.split('\n').map(k => k.trim()).filter(k => k);
+    const selectedSources = Array.from(document.querySelectorAll('#agentSourceCheckboxes input:checked')).map(cb => cb.value);
+    const collId = document.getElementById('agentCollection').value;
+    const mode = document.querySelector('input[name="agentMode"]:checked').value;
+
+    if (!name || keywords.length === 0) {
+        err.textContent = 'Заполните название и ключевые слова';
+        err.style.display = 'block';
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/agents', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name,
+                keywords,
+                source_ids: selectedSources,
+                collection_ids: collId ? [collId] : [],
+                search_mode: mode,
+            })
+        });
+
+        if (res.ok) {
+            suc.textContent = 'Агент создан!';
+            suc.style.display = 'block';
+            e.target.reset();
+            await loadAgents();
+        } else {
+            const data = await res.json();
+            err.textContent = data.detail || 'Ошибка создания';
+            err.style.display = 'block';
+        }
+    } catch (e) {
+        err.textContent = 'Ошибка: ' + e.message;
+        err.style.display = 'block';
+    }
+});
+
+async function toggleAgent(id) {
+    await fetch('/api/agents/' + id + '/toggle', {method: 'POST'});
+    await loadAgents();
+}
+
+async function deleteAgent(id) {
+    if (!confirm('Удалить агент? Это необратимо.')) return;
+    await fetch('/api/agents/' + id, {method: 'DELETE'});
+    await loadAgents();
+}
+
+function editAgent(id) {
+    alert('Редактирование: функция в разработке');
+}
+
+function viewResults(id) {
+    alert('Результаты агента: функция в разработке');
+}
+
+async function markNotifRead(id) {
+    await fetch('/api/agents/notifications/' + id + '/read', {method: 'PATCH'});
+    await loadNotifications();
+}
+
+loadSources();
+loadCollections();
+loadAgents();
+setInterval(loadNotifications, 5000);  // Обновляем уведомления каждые 5 сек
+</script>
+{% endblock %}

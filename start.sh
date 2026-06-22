@@ -1,7 +1,5 @@
 #!/bin/bash
 
-export PYTHONPATH="${PYTHONPATH:-/app}"
-
 echo "=== TG Parser startup ==="
 echo "Python: $(python --version)"
 echo "Port: ${PORT:-8000}"

@@ -6,8 +6,6 @@ Given a keyword like "ставка", returns related terms:
 import json
 import logging
 
-import anthropic
-
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -41,6 +39,8 @@ async def expand_query(keyword: str) -> list[str]:
         return [keyword]
 
     try:
+        import anthropic
+
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         response = await client.messages.create(
             model="claude-sonnet-4-20250514",

@@ -6,7 +6,7 @@
 <div class="card">
     <form id="searchForm">
         <div class="search-main">
-            <input type="text" id="searchKeyword" placeholder="Введите ключевое слово или фразу..." class="search-input" required>
+            <input type="text" id="searchKeyword" placeholder="Маркетинг, партнерство, интеграция, коллаборация" class="search-input" required>
             <button type="submit" class="btn btn-primary btn-lg" id="searchBtn">Искать</button>
         </div>
         <div style="margin:8px 0">
@@ -43,6 +43,16 @@
             <div class="search-option">
                 <label class="form-label">Или отдельные источники:</label>
                 <div id="sourceCheckboxes" class="source-checkboxes"></div>
+            </div>
+            <div class="search-option">
+                <label class="source-checkbox">
+                    <input type="checkbox" id="createAgentInstead">
+                    Поставить агента на этот запрос
+                </label>
+                <input type="text" id="searchAgentName" placeholder="Название агента" style="margin-top:8px;display:none;width:100%">
+                <div class="hint" id="agentHint" style="display:none;margin-top:6px">
+                    Агент будет проверять выбранные чаты каждый час и складывать найденное в результаты.
+                </div>
             </div>
         </div>
     </form>
@@ -167,6 +177,11 @@ function getSelectedSourceIds() {
     return Array.from(ids);
 }
 
+function getSelectedCollectionIds() {
+    const collCbs = document.querySelectorAll('#collectionCheckboxes input[type=checkbox]:checked');
+    return Array.from(collCbs).map(cb => cb.value.replace(/^coll_/, ''));
+}
+
 function buildSearchParams() {
     const params = new URLSearchParams();
     const keyword = document.getElementById('searchKeyword').value.trim();
@@ -180,20 +195,52 @@ function buildSearchParams() {
     } else {
         lastSourceIds = '';
     }
+    const selectedCollections = getSelectedCollectionIds();
+    if (selectedCollections.length > 0) {
+        params.set('collection_ids', selectedCollections.join(','));
+    }
 
     const dateFrom = document.getElementById('searchDateFrom').value;
     const dateTo = document.getElementById('searchDateTo').value;
     if (dateFrom) params.set('date_from', dateFrom + 'T00:00:00');
     if (dateTo) params.set('date_to', dateTo + 'T23:59:59');
 
-    const smart = document.getElementById('smartSearch').checked;
-    params.set('smart', smart);
-
     // Search mode (exact, smart, aggressive)
     const mode = document.querySelector('input[name="searchMode"]:checked').value;
     params.set('mode', mode);
+    params.set('smart', mode !== 'exact');
 
     return params;
+}
+
+async function createAgentFromSearch() {
+    const keywords = document.getElementById('searchKeyword').value
+        .split(/[,;\n]+/)
+        .map(k => k.trim())
+        .filter(Boolean);
+    const nameInput = document.getElementById('searchAgentName');
+    const name = nameInput.value.trim() || ('Агент: ' + keywords.slice(0, 3).join(', '));
+    const mode = document.querySelector('input[name="searchMode"]:checked').value;
+    const selectedSources = getSelectedSourceIds();
+    const selectedCollections = getSelectedCollectionIds();
+
+    const res = await fetch('/api/agents', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            name,
+            keywords,
+            source_ids: selectedSources,
+            collection_ids: selectedCollections,
+            search_mode: mode,
+            interval_hours: 1,
+        })
+    });
+    if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Не удалось создать агента');
+    }
+    return res.json();
 }
 
 function createRow(r) {
@@ -253,6 +300,13 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
     resultsDiv.style.display = 'none';
 
     try {
+        if (document.getElementById('createAgentInstead').checked) {
+            const agent = await createAgentFromSearch();
+            status.textContent = 'Агент «' + agent.name + '» создан и будет искать каждый час.';
+            status.style.display = 'block';
+            return;
+        }
+
         const params = buildSearchParams();
         const res = await fetch('/api/search?' + params.toString());
         const data = await res.json();
@@ -300,6 +354,12 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         btn.disabled = false;
         btn.textContent = 'Искать';
     }
+});
+
+document.getElementById('createAgentInstead').addEventListener('change', (e) => {
+    document.getElementById('searchAgentName').style.display = e.target.checked ? 'block' : 'none';
+    document.getElementById('agentHint').style.display = e.target.checked ? 'block' : 'none';
+    document.getElementById('searchBtn').textContent = e.target.checked ? 'Поставить агента' : 'Искать';
 });
 
 // --- History ---

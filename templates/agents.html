@@ -302,8 +302,9 @@ function editAgent(id) {
     alert('Редактирование: функция в разработке');
 }
 
-function viewResults(id) {
-    alert('Результаты агента: функция в разработке');
+function viewResults(agentId) {
+    sessionStorage.setItem('showAgentId', agentId);
+    window.location.href = '/results-page';
 }
 
 async function markNotifRead(id) {

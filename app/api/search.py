@@ -2,6 +2,7 @@
 import csv
 import io
 import logging
+import re
 import uuid
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.database import get_db
+from app.models.collection import CollectionItem
 from app.models.search_history import SearchHistory
 from app.services.live_parser import live_search
 from app.services.query_expander import expand_query
@@ -26,10 +28,29 @@ router = APIRouter(
 )
 
 
+def parse_keywords(keyword: str) -> list[str]:
+    """Split a user query into individual keywords/phrases."""
+    keywords = [part.strip() for part in re.split(r"[,;\n]+", keyword) if part.strip()]
+    return list(dict.fromkeys(keywords))
+
+
+async def resolve_collection_source_ids(
+    db: AsyncSession,
+    collection_ids: list[uuid.UUID],
+) -> list[uuid.UUID]:
+    if not collection_ids:
+        return []
+    result = await db.execute(
+        select(CollectionItem.source_id).where(CollectionItem.collection_id.in_(collection_ids))
+    )
+    return list(dict.fromkeys(result.scalars().all()))
+
+
 @router.get("")
 async def search(
     keyword: str = Query(..., min_length=1),
     source_ids: str | None = Query(None),
+    collection_ids: str | None = Query(None),
     date_from: str | None = None,
     date_to: str | None = None,
     smart: bool = Query(True),
@@ -37,25 +58,37 @@ async def search(
     limit: int = Query(500, ge=10, le=2000),
     db: AsyncSession = Depends(get_db),
 ):
-    parsed_source_ids = None
+    keywords = parse_keywords(keyword)
+    if not keywords:
+        raise HTTPException(status_code=400, detail="Введите хотя бы одно ключевое слово")
+
+    parsed_source_ids = []
     if source_ids:
-        parsed_source_ids = [uuid.UUID(s.strip()) for s in source_ids.split(",") if s.strip()]
+        parsed_source_ids.extend(uuid.UUID(s.strip()) for s in source_ids.split(",") if s.strip())
+    if collection_ids:
+        parsed_collection_ids = [uuid.UUID(s.strip()) for s in collection_ids.split(",") if s.strip()]
+        parsed_source_ids.extend(await resolve_collection_source_ids(db, parsed_collection_ids))
+    parsed_source_ids = list(dict.fromkeys(parsed_source_ids))
 
     parsed_date_from = datetime.fromisoformat(date_from) if date_from else None
     parsed_date_to = datetime.fromisoformat(date_to) if date_to else None
 
-    # Process query based on mode
-    expanded_terms = None
-    if mode != "exact":
-        # Use new query processor for lemmatization, typos, fuzzy
-        expanded_terms = await process_query(keyword, mode)
-    elif smart:
-        # Fallback: if exact mode but smart flag enabled, use Claude
-        expanded_terms = await expand_query(keyword)
+    expanded_by_keyword = {}
+    expanded_terms = []
+    for item in keywords:
+        if mode != "exact":
+            terms = await process_query(item, mode)
+        elif smart:
+            terms = await expand_query(item)
+        else:
+            terms = [item]
+        expanded_by_keyword[item] = terms
+        expanded_terms.extend(terms)
+    expanded_terms = list(dict.fromkeys(expanded_terms))
 
     results = await live_search(
         keyword=keyword,
-        source_ids=parsed_source_ids,
+        source_ids=parsed_source_ids or None,
         date_from=parsed_date_from,
         date_to=parsed_date_to,
         limit_per_source=limit,
@@ -78,7 +111,9 @@ async def search(
         "results": results,
         "total": len(results),
         "keyword": keyword,
+        "keywords": keywords,
         "expanded_terms": expanded_terms,
+        "expanded_by_keyword": expanded_by_keyword,
         "history_id": str(history.id),
     }
 

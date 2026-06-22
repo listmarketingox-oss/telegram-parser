@@ -19,6 +19,7 @@ from app.config import settings
 from app.database import async_session
 from app.models.agent import Agent
 from app.models.agent_result import AgentResult
+from app.models.collection import CollectionItem
 from app.models.filter_set import FilterSet
 from app.models.job import Job, JobStatus, JobType
 from app.models.keyword import Keyword
@@ -287,8 +288,20 @@ async def _process_agent_job(db: AsyncSession, job: Job):
     collection_ids = job.payload.get('collection_ids', [])
     mode = job.payload['search_mode']
 
-    # Convert source_ids strings to UUIDs
+    # Convert source_ids strings to UUIDs and merge sources from collections.
     source_uuids = [uuid.UUID(s) if isinstance(s, str) else s for s in source_ids]
+    collection_uuids = [
+        uuid.UUID(s) if isinstance(s, str) else s
+        for s in collection_ids
+    ]
+    if collection_uuids:
+        result = await db.execute(
+            select(CollectionItem.source_id).where(
+                CollectionItem.collection_id.in_(collection_uuids)
+            )
+        )
+        source_uuids.extend(result.scalars().all())
+    source_uuids = list(dict.fromkeys(source_uuids))
 
     # Search all keywords, collect matches
     all_matches = []
@@ -338,7 +351,7 @@ async def _process_agent_job(db: AsyncSession, job: Job):
 
 
 async def check_active_agents():
-    """Check all active agents and create jobs (hourly 8-20)."""
+    """Check all active agents and create hourly jobs."""
     async with async_session() as db:
         result = await db.execute(
             select(Agent).where(Agent.is_active == True)
@@ -382,9 +395,8 @@ async def main():
     )
     scheduler.add_job(
         check_active_agents,
-        "cron",
-        hour="8-20",
-        minute="0",
+        "interval",
+        hours=1,
         id="check_active_agents",
     )
     scheduler.start()

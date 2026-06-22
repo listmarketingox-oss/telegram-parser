@@ -8,19 +8,36 @@ Supports three modes:
 import logging
 from typing import Set
 
-import pymorphy2
-from fuzzywuzzy import fuzz
-
 from app.services.query_expander import expand_query
 
 logger = logging.getLogger(__name__)
 
-# Russian morphology analyzer
-_morph = pymorphy2.MorphAnalyzer()
+# Russian morphology analyzer, initialized lazily so the app can start without
+# optional smart-search dependencies installed.
+_morph = None
 
 # Common Russian words for fuzzy matching (subset of pymorphy2 dictionary)
 # In production, can be expanded or cached
 _FUZZY_DICTIONARY = None
+
+
+def _get_morph():
+    """Return Russian morphology analyzer or None if dependency is missing."""
+    global _morph
+    if _morph is not None:
+        return _morph
+
+    try:
+        try:
+            import pymorphy3 as pymorphy
+        except ImportError:
+            import pymorphy2 as pymorphy
+
+        _morph = pymorphy.MorphAnalyzer()
+        return _morph
+    except Exception as e:
+        logger.warning("Russian morphology is unavailable, smart morphology disabled: %s", e)
+        return None
 
 
 def _load_fuzzy_dictionary() -> Set[str]:
@@ -30,9 +47,14 @@ def _load_fuzzy_dictionary() -> Set[str]:
         return _FUZZY_DICTIONARY
 
     # Get unique lemmas from pymorphy2's dictionary
+    morph = _get_morph()
+    if morph is None:
+        _FUZZY_DICTIONARY = set()
+        return _FUZZY_DICTIONARY
+
     words = set()
-    for word_form in _morph.dict.items():
-        lemma = _morph.parse(word_form.word)[0].normal_form
+    for word_form in morph.dict.items():
+        lemma = morph.parse(word_form.word)[0].normal_form
         if len(lemma) >= 3:  # Skip very short words
             words.add(lemma)
     _FUZZY_DICTIONARY = words
@@ -50,7 +72,11 @@ def get_lemma(word: str) -> str:
         Lemmatized form, or original word if not found
     """
     try:
-        parsed = _morph.parse(word)
+        morph = _get_morph()
+        if morph is None:
+            return word
+
+        parsed = morph.parse(word)
         if parsed:
             return parsed[0].normal_form
         return word
@@ -155,6 +181,8 @@ def fuzzy_search(word: str, threshold: int = 85) -> Set[str]:
         return set()
 
     try:
+        from fuzzywuzzy import fuzz
+
         dictionary = _load_fuzzy_dictionary()
         similar = set()
 
@@ -190,8 +218,12 @@ def find_truncated_words(word: str) -> Set[str]:
         return set()
 
     results = set()
+    morph = _get_morph()
+    if morph is None:
+        return results
+
     # Use pymorphy2 dictionary to find inflections
-    for parsed in _morph.TaggedDict.get(word, []):
+    for parsed in morph.TaggedDict.get(word, []):
         if parsed:
             results.add(parsed.word)
 

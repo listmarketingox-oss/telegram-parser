@@ -24,6 +24,11 @@ app.include_router(pages.router)
 
 @app.get("/health")
 async def health():
+    return {"status": "ok"}
+
+
+@app.get("/health/db")
+async def health_db():
     try:
         async with async_session() as db:
             await db.execute(text("SELECT 1"))

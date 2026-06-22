@@ -18,6 +18,10 @@
     </div>
 </div>
 
+<h3>Агентские папки</h3>
+<div id="agentFolders"></div>
+
+<h3>История ручных поисков</h3>
 <div id="historyContainer"></div>
 
 <div id="detailView" style="display:none">
@@ -31,6 +35,16 @@
             </div>
         </div>
         <div id="detailMeta" class="filter-meta" style="margin-top:8px"></div>
+        <div class="form-inline" style="margin-top:12px">
+            <select id="detailSortBy" onchange="renderDetailRows()">
+                <option value="posted_desc">Сначала последние сообщения</option>
+                <option value="posted_asc">Сначала ранние сообщения</option>
+                <option value="source">По каналу</option>
+                <option value="keyword">По ключу</option>
+            </select>
+            <input type="text" id="detailFilterText" placeholder="Фильтр в сообщениях..." oninput="renderDetailRows()">
+            <input type="text" id="detailFilterSource" placeholder="Фильтр по каналу..." oninput="renderDetailRows()">
+        </div>
     </div>
 
     <table class="data-table" id="detailTable">
@@ -53,6 +67,13 @@
 {% block scripts %}
 <script>
 let allHistory = [];
+let allAgents = [];
+let detailRows = [];
+
+function dateValue(value) {
+    const parsed = Date.parse(value || '');
+    return Number.isNaN(parsed) ? 0 : parsed;
+}
 
 function createHistoryCard(h) {
     const card = document.createElement('div');
@@ -108,6 +129,54 @@ function createHistoryCard(h) {
     return card;
 }
 
+function createAgentFolder(a) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.cssText = 'cursor:pointer;margin-bottom:12px;border-left:4px solid #f59e0b';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:18px;font-weight:700;color:#1a1a2e';
+    title.textContent = 'Папка: ' + a.name;
+    header.appendChild(title);
+
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (a.is_active ? 'badge-active' : 'badge-off');
+    badge.textContent = a.is_active ? 'агент ищет' : 'агент остановлен';
+    header.appendChild(badge);
+
+    card.appendChild(header);
+
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size:13px;color:#666;margin-top:8px';
+    const lastRun = a.last_run_at ? new Date(a.last_run_at).toLocaleString('ru') : 'ещё не запускался';
+    meta.textContent = (a.keywords || []).join(', ') + ' | каждый час | найдено всего: ' + a.results_count + ' | последний запуск: ' + lastRun;
+    card.appendChild(meta);
+
+    card.addEventListener('click', () => showAgentFolder(a.id));
+    return card;
+}
+
+async function loadAgentFolders() {
+    const res = await fetch('/api/agents');
+    allAgents = await res.json();
+    const container = document.getElementById('agentFolders');
+    container.replaceChildren();
+
+    if (!Array.isArray(allAgents) || allAgents.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'card';
+        empty.style.color = '#888';
+        empty.textContent = 'Агентских папок пока нет. Создать агента можно на странице «Поиск».';
+        container.appendChild(empty);
+        return;
+    }
+
+    allAgents.forEach(a => container.appendChild(createAgentFolder(a)));
+}
+
 async function loadAllHistory() {
     const res = await fetch('/api/search/history?limit=200');
     allHistory = await res.json();
@@ -126,9 +195,9 @@ async function loadAllHistory() {
     // Apply sort
     const sortBy = document.getElementById('sortBy').value;
     if (sortBy === 'date_asc') filtered.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    else if (sortBy === 'date_desc') filtered.sort((a, b) => b.created_at.localeCompare(a.created_at));
     else if (sortBy === 'results_desc') filtered.sort((a, b) => b.results_count - a.results_count);
     else if (sortBy === 'keyword') filtered.sort((a, b) => a.keyword.localeCompare(b.keyword));
-    // date_desc is default from API
 
     // Group by date
     const grouped = {};
@@ -223,9 +292,9 @@ async function showDetail(historyId) {
     parts.push('Поиск: ' + new Date(data.created_at).toLocaleString('ru'));
     document.getElementById('detailMeta').textContent = parts.join(' | ');
 
-    const tbody = document.querySelector('#detailTable tbody');
-    tbody.replaceChildren();
-    (data.results || []).forEach(r => tbody.appendChild(createRow(r)));
+    detailRows = data.results || [];
+    resetDetailFilters();
+    renderDetailRows();
 
     document.getElementById('exportCsvBtn').onclick = () =>
         window.open('/api/search/export/' + encodeURIComponent(historyId) + '?format=csv');
@@ -237,9 +306,73 @@ async function showDetail(historyId) {
     document.getElementById('detailView').style.display = 'block';
 }
 
+async function showAgentFolder(agentId) {
+    const runsRes = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/results?limit=100');
+    const runs = await runsRes.json();
+    const agent = allAgents.find(a => a.id === agentId);
+
+    document.getElementById('detailTitle').textContent = 'Папка агента «' + (agent ? agent.name : '') + '»';
+    const metaParts = [];
+    if (agent) {
+        metaParts.push((agent.keywords || []).join(', '));
+        metaParts.push(agent.is_active ? 'агент ищет' : 'агент остановлен');
+    }
+    metaParts.push('запусков: ' + runs.length);
+    document.getElementById('detailMeta').textContent = metaParts.join(' | ');
+
+    const allMatches = [];
+    for (const run of runs) {
+        const detailRes = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/results/' + encodeURIComponent(run.id));
+        const detail = await detailRes.json();
+        (detail.matches || []).forEach(match => {
+            allMatches.push({...match, agent_run_at: detail.created_at});
+        });
+    }
+    detailRows = allMatches;
+    resetDetailFilters();
+    renderDetailRows();
+
+    document.getElementById('exportCsvBtn').onclick = null;
+    document.getElementById('exportXlsxBtn').onclick = null;
+    document.getElementById('historyContainer').style.display = 'none';
+    document.getElementById('agentFolders').style.display = 'none';
+    document.querySelector('.filters-bar').style.display = 'none';
+    document.getElementById('detailView').style.display = 'block';
+}
+
+function resetDetailFilters() {
+    document.getElementById('detailSortBy').value = 'posted_desc';
+    document.getElementById('detailFilterText').value = '';
+    document.getElementById('detailFilterSource').value = '';
+}
+
+function renderDetailRows() {
+    const sortBy = document.getElementById('detailSortBy').value;
+    const textFilter = document.getElementById('detailFilterText').value.toLowerCase();
+    const sourceFilter = document.getElementById('detailFilterSource').value.toLowerCase();
+
+    let rows = [...detailRows];
+    if (textFilter) {
+        rows = rows.filter(r => (r.message_text || '').toLowerCase().includes(textFilter));
+    }
+    if (sourceFilter) {
+        rows = rows.filter(r => (r.source_title || '').toLowerCase().includes(sourceFilter));
+    }
+
+    if (sortBy === 'posted_asc') rows.sort((a, b) => dateValue(a.posted_at) - dateValue(b.posted_at));
+    else if (sortBy === 'source') rows.sort((a, b) => (a.source_title || '').localeCompare(b.source_title || ''));
+    else if (sortBy === 'keyword') rows.sort((a, b) => (a.matched_keywords || []).join(', ').localeCompare((b.matched_keywords || []).join(', ')));
+    else rows.sort((a, b) => dateValue(b.posted_at) - dateValue(a.posted_at));
+
+    const tbody = document.querySelector('#detailTable tbody');
+    tbody.replaceChildren();
+    rows.forEach(r => tbody.appendChild(createRow(r)));
+}
+
 function closeDetail() {
     document.getElementById('detailView').style.display = 'none';
     document.getElementById('historyContainer').style.display = 'block';
+    document.getElementById('agentFolders').style.display = 'block';
     document.querySelector('.filters-bar').style.display = 'flex';
 }
 
@@ -256,6 +389,17 @@ function clearFilters() {
     loadAllHistory();
 }
 
+loadAgentFolders();
 loadAllHistory();
+
+// Auto-open agent folder if navigated from agents page
+const showAgentId = sessionStorage.getItem('showAgentId');
+if (showAgentId) {
+    sessionStorage.removeItem('showAgentId');
+    setTimeout(() => {
+        const agent = allAgents.find(a => a.id === showAgentId);
+        if (agent) showAgentFolder(showAgentId);
+    }, 500);
+}
 </script>
 {% endblock %}

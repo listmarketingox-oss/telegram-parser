@@ -11,8 +11,10 @@ from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.agent import Agent
 from app.models.agent_result import AgentResult
+from app.models.collection import CollectionItem
 from app.models.notification import Notification
 from app.models.user import AppUser
+from app.api.search import parse_keywords
 
 router = APIRouter(
     prefix="/agents",
@@ -30,6 +32,7 @@ class AgentCreate(BaseModel):
     source_ids: list[str] = []
     collection_ids: list[str] = []
     search_mode: str = "smart"
+    interval_hours: int = 1
 
 
 class AgentUpdate(BaseModel):
@@ -49,6 +52,7 @@ class AgentResponse(BaseModel):
     search_mode: str
     is_active: bool
     last_run_at: str | None
+    interval_hours: int
     results_count: int
     created_at: str
 
@@ -72,14 +76,31 @@ async def create_agent(
     user: AppUser = Depends(get_current_user),
 ):
     """Create new monitoring agent."""
+    keywords = []
+    for item in body.keywords:
+        keywords.extend(parse_keywords(item))
+    keywords = list(dict.fromkeys(keywords))
+    if not keywords:
+        raise HTTPException(status_code=400, detail="Введите хотя бы одно ключевое слово")
+
+    # Resolve collection_ids into source_ids
+    source_ids = list(body.source_ids) if body.source_ids else []
+    if body.collection_ids:
+        parsed_collection_ids = [uuid.UUID(s) if isinstance(s, str) else s for s in body.collection_ids]
+        result = await db.execute(
+            select(CollectionItem.source_id).where(CollectionItem.collection_id.in_(parsed_collection_ids))
+        )
+        source_ids.extend(result.scalars().all())
+    source_ids = list(dict.fromkeys(source_ids))
+
     agent = Agent(
         user_id=user.id,
         name=body.name,
-        keywords=body.keywords,
-        source_ids=body.source_ids,
+        keywords=keywords,
+        source_ids=source_ids,
         collection_ids=body.collection_ids,
         search_mode=body.search_mode,
-        cron_schedule="0 8-20 * * *",  # Fixed schedule
+        cron_schedule=f"interval:{max(body.interval_hours, 1)}h",
         is_active=True,
     )
     db.add(agent)
@@ -114,6 +135,7 @@ async def list_agents(
             search_mode=a.search_mode,
             is_active=a.is_active,
             last_run_at=a.last_run_at.isoformat() if a.last_run_at else None,
+            interval_hours=1,
             results_count=a.results_count,
             created_at=a.created_at.isoformat(),
         )
@@ -140,6 +162,7 @@ async def get_agent(
         search_mode=agent.search_mode,
         is_active=agent.is_active,
         last_run_at=agent.last_run_at.isoformat() if agent.last_run_at else None,
+        interval_hours=1,
         results_count=agent.results_count,
         created_at=agent.created_at.isoformat(),
     )
@@ -181,6 +204,7 @@ async def update_agent(
         search_mode=agent.search_mode,
         is_active=agent.is_active,
         last_run_at=agent.last_run_at.isoformat() if agent.last_run_at else None,
+        interval_hours=1,
         results_count=agent.results_count,
         created_at=agent.created_at.isoformat(),
     )
@@ -237,12 +261,40 @@ async def agent_results(
     return [
         {
             "id": str(r.id),
+            "agent_id": str(r.agent_id),
             "found_count": r.found_count,
             "matches_count": len(r.matches or []),
             "created_at": r.created_at.isoformat(),
         }
         for r in results
     ]
+
+
+@router.get("/{agent_id}/results/{result_id}")
+async def agent_result_detail(
+    agent_id: uuid.UUID,
+    result_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: AppUser = Depends(get_current_user),
+):
+    """Get one agent run with saved matches."""
+    agent = await db.get(Agent, agent_id)
+    if not agent or agent.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    result = await db.get(AgentResult, result_id)
+    if not result or result.agent_id != agent_id:
+        raise HTTPException(status_code=404, detail="Agent result not found")
+
+    return {
+        "id": str(result.id),
+        "agent_id": str(agent.id),
+        "agent_name": agent.name,
+        "keywords": agent.keywords,
+        "found_count": result.found_count,
+        "matches": result.matches or [],
+        "created_at": result.created_at.isoformat(),
+    }
 
 
 # ===== Notifications =====

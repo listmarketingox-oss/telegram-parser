@@ -40,5 +40,6 @@ python -m app.worker
 ## Tests
 
 ```bash
+pip install -r requirements-dev.txt
 pytest tests/ -v
 ```

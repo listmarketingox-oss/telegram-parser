@@ -15,6 +15,7 @@ from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.collection import CollectionItem
 from app.models.search_history import SearchHistory
+from app.models.tg_account import AccountStatus, TgAccount
 from app.services.live_parser import live_search
 from app.services.query_expander import expand_query
 from app.services.query_processor import process_query
@@ -95,6 +96,15 @@ async def search(
         expanded_terms=expanded_terms,
     )
 
+    # Surface accounts whose session died (live_search flips them to error) so the
+    # user is told to re-authorize instead of silently seeing an empty result.
+    warnings: list[str] = []
+    err_accounts = await db.execute(
+        select(TgAccount).where(TgAccount.status == AccountStatus.error)
+    )
+    for acc in err_accounts.scalars().all():
+        warnings.append(acc.last_error or f"Аккаунт «{acc.label}» нужно переавторизовать")
+
     # Save to history
     history = SearchHistory(
         keyword=keyword,
@@ -115,6 +125,7 @@ async def search(
         "expanded_terms": expanded_terms,
         "expanded_by_keyword": expanded_by_keyword,
         "history_id": str(history.id),
+        "warnings": warnings,
     }
 
 

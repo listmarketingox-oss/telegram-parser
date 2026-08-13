@@ -60,6 +60,8 @@
 
 <div id="searchStatus" class="search-status" style="display:none"></div>
 
+<div id="searchWarnings" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:6px;background:#3a2a00;color:#ffcf66;border:1px solid #7a5a00;font-size:13px"></div>
+
 <div id="searchResults" style="display:none">
     <div class="results-header">
         <div id="searchMeta" class="results-meta"></div>
@@ -317,6 +319,16 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
 
         document.getElementById('searchMeta').textContent =
             'Найдено: ' + data.total + ' совпадений по запросу "' + data.keyword + '"';
+
+        // Show account warnings (e.g. dead Telegram session — needs re-auth)
+        const warnDiv = document.getElementById('searchWarnings');
+        if (data.warnings && data.warnings.length) {
+            warnDiv.textContent = '⚠️ ' + data.warnings.join(' · ') +
+                ' — откройте «Аккаунты» и нажмите «Авторизовать».';
+            warnDiv.style.display = 'block';
+        } else {
+            warnDiv.style.display = 'none';
+        }
 
         // Show expanded terms
         const termsDiv = document.getElementById('expandedTerms');

@@ -16,6 +16,44 @@ from app.services.encryption import decrypt
 
 logger = logging.getLogger(__name__)
 
+# Telethon/encryption errors that mean the stored session is no longer usable.
+# When we hit one of these, retrying other sources on the same account is
+# pointless — the account must be re-authorized ("Авторизовать" on /accounts-page).
+_SESSION_DEAD_ERROR_NAMES = frozenset({
+    "AuthKeyUnregisteredError",
+    "AuthKeyInvalidError",
+    "AuthKeyDuplicatedError",
+    "SessionRevokedError",
+    "SessionExpiredError",
+    "UnauthorizedError",
+    "UserDeactivatedError",
+    "UserDeactivatedBanError",
+    "InvalidToken",  # cryptography.fernet — ENCRYPTION_KEY mismatch on the server
+})
+
+
+def _is_session_dead_error(exc: Exception) -> bool:
+    """True if the exception means the account session is invalid (needs re-auth)."""
+    return type(exc).__name__ in _SESSION_DEAD_ERROR_NAMES
+
+
+async def _mark_accounts_dead(dead: dict) -> None:
+    """Flip invalid-session accounts to status=error so the failure is visible."""
+    if not dead:
+        return
+    async with async_session() as db:
+        for account_id, message in dead.items():
+            account = await db.get(TgAccount, account_id)
+            if account and account.status != AccountStatus.error:
+                account.status = AccountStatus.error
+                account.last_error = message
+                logger.error(
+                    "Account %s marked as error — needs re-auth: %s",
+                    account.label,
+                    message,
+                )
+        await db.commit()
+
 
 async def _resolve_entity(client, source):
     """Resolve entity using username first, then entity_id with -100 prefix."""
@@ -66,6 +104,8 @@ async def live_search(
         accounts = {a.id: a for a in acc_result.scalars().all()}
 
     results = []
+    # account_id -> human message, for accounts whose session is dead this run.
+    dead_accounts: dict = {}
 
     # Build pattern from expanded terms or just the keyword
     search_terms = expanded_terms if expanded_terms else [keyword]
@@ -88,6 +128,9 @@ async def live_search(
         account = accounts.get(source.account_id)
         if not account:
             continue
+        # Session already proven dead this run — don't retry every other source.
+        if source.account_id in dead_accounts:
+            continue
 
         client = None
         try:
@@ -95,6 +138,13 @@ async def live_search(
             session_str = decrypt(account.session_string)
             client = TelegramClient(StringSession(session_str), account.api_id, api_hash)
             await client.connect()
+
+            if not await client.is_user_authorized():
+                dead_accounts[source.account_id] = (
+                    f"Сессия Telegram недействительна — аккаунт «{account.label}» "
+                    f"нужно переавторизовать"
+                )
+                continue
 
             entity = await _resolve_entity(client, source)
             if not entity:
@@ -167,13 +217,21 @@ async def live_search(
         except FloodWaitError as e:
             logger.warning("FloodWait %ds for account %s, skipping source %s", e.seconds, account.id, source.title)
         except Exception as e:
-            logger.error("Error with source %s: %s", source.title, e)
+            if _is_session_dead_error(e):
+                dead_accounts[source.account_id] = (
+                    f"Сессия Telegram недействительна ({type(e).__name__}) — "
+                    f"переавторизуйте аккаунт «{account.label}»"
+                )
+            else:
+                logger.error("Error with source %s: %s", source.title, e)
         finally:
             if client:
                 try:
                     await client.disconnect()
                 except Exception:
                     pass
+
+    await _mark_accounts_dead(dead_accounts)
 
     results.sort(key=lambda r: r["posted_at"], reverse=True)
     return results
